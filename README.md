@@ -1,6 +1,6 @@
-
 # Sandbox Codex
 
+Author: Marc Schwarzschild
 
 OpenAI Codex is an amazing tool useful beyond just having a ChatGPT style conversation.
 It can also read and modify files.  A common use is modifying or writing new computer code.
