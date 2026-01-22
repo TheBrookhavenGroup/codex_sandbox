@@ -13,7 +13,6 @@ Docker it only has access to the `/workspace` root and any subdirectories.  The 
 Z shell convenience script maps the current working directory on the host computer to the `/workspace`
 directory giving codex access only to the host computer working directory and its children.
 
-
 The script will prompt the user to open a sandbox shell and if so, prompts to start codex.
 
 The following few lines added to the `~/.zshrc` runs `docker_codex.zsh` if the directory where zsh is started
@@ -36,6 +35,8 @@ run_codex
 ## Install Codex
 
 Follow the [Codex](https://openai.com/codex/) instructions.
+
+The [Codex Skills](https://developers.openai.com/codex/skills) has great tips for Codex users.
 
 ## Build
 
