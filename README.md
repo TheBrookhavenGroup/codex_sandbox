@@ -2,9 +2,9 @@
 
 Author: Marc Schwarzschild
 
-OpenAI [Codex](https://openai.com/codex/) is an amazing tool useful beyond just having a ChatGPT style conversation.
-It can also read and modify files.  A common use is modifying or writing new computer code.
-However, unchecked it has full access to all information on the computer it runs on.
+OpenAI [Codex](https://openai.com/codex/) is an amazing tool useful beyond just having a ChatGPT
+style conversation. It can also read and modify files.  A common use is modifying or writing new
+code. However, unchecked it has full access to all information on the computer it runs on.
 With a couple of simple scripts in this repo codex can be sandboxed restricting access to only
 relevant directories using [Docker](https://www.docker.com/).
 
