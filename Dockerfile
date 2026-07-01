@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     vim \
     bash \
     gnupg \
+    bubblewrap \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # ------------------------------------------------------------
@@ -41,6 +43,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN npm install -g @openai/codex
 
 # ------------------------------------------------------------
+# Prepare Codex home from the host-mounted Mac config
+# ------------------------------------------------------------
+COPY codex-sandbox-entrypoint.sh /usr/local/bin/codex-sandbox-entrypoint
+RUN chmod +x /usr/local/bin/codex-sandbox-entrypoint
+COPY .bashrc /root/.bashrc
+
+# ------------------------------------------------------------
 # Codex startup prompt (login + interactive shell)
 # ------------------------------------------------------------
 RUN cat <<'EOF' >/etc/profile.d/codex.sh
@@ -49,7 +58,7 @@ if [[ $- == *i* ]] && [[ -z "$CODEX_PROMPTED" ]] && command -v codex >/dev/null 
   read -p "Start Codex CLI? [y/N] " answer
   case "$answer" in
     y|Y|yes|YES)
-      exec codex
+      codex resume --all
       ;;
   esac
 fi
@@ -63,4 +72,5 @@ WORKDIR /workspace
 # ------------------------------------------------------------
 # Start login + interactive shell
 # ------------------------------------------------------------
+ENTRYPOINT ["/usr/local/bin/codex-sandbox-entrypoint"]
 CMD ["/bin/bash", "-il"]

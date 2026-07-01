@@ -1,37 +1,74 @@
 #!/usr/bin/env zsh
 
-read "REPLY?Sandbox/codex? [y/N] "
+set -euo pipefail
 
-if [[ "$REPLY" == [yY] || "$REPLY" == [yY][eE][sS] ]]; then
-  set -euo pipefail
+IMAGE="codex-sandbox"
+HOST_DIR="$(pwd -P)"
+HOST_DEV_DIR="${CODEX_HOST_DEV_DIR:-$HOME/dev}"
+HOST_CODEX_DIR="${CODEX_HOST_DIR:-$HOME/.codex}"
+DOCKER_CODEX_HOME="/host-codex/docker-home"
+mkdir -p "$HOST_CODEX_DIR"
+HOST_CODEX_REAL_DIR="$(cd "$HOST_CODEX_DIR" && pwd -P)"
 
-  IMAGE="codex-sandbox"
-  HOST_DIR="$(pwd)"
-  CODEX_VOLUME="codex-auth"
+if [[ ! -d "$HOST_DEV_DIR" ]]; then
+  echo "❌ Host dev directory does not exist: $HOST_DEV_DIR"
+  return 1 2>/dev/null || exit 1
+fi
 
+HOST_DEV_REAL_DIR="$(cd "$HOST_DEV_DIR" && pwd -P)"
+
+DOCKER_VOLUMES=(
+  -v "$HOST_CODEX_DIR:/host-codex:rw"
+  -v "$HOST_DEV_DIR:/workspace/dev:rw"
+)
+
+DOCKER_SOCKET="${CODEX_DOCKER_SOCKET:-$HOME/.docker/run/docker.sock}"
+if [[ -S "$DOCKER_SOCKET" ]]; then
+  DOCKER_VOLUMES+=(
+    -v "$DOCKER_SOCKET:/var/run/docker.sock:rw"
+  )
+fi
+
+if [[ "$HOST_DIR" == "$HOST_DEV_REAL_DIR" ]]; then
+  CONTAINER_WORKDIR="/workspace/dev"
+elif [[ "$HOST_DIR" == "$HOST_DEV_REAL_DIR"/* ]]; then
+  CONTAINER_WORKDIR="/workspace/dev/${HOST_DIR#$HOST_DEV_REAL_DIR/}"
+else
+  CONTAINER_WORKDIR="/workspace/dev"
+fi
+
+echo
+echo "🐳 Codex Docker Sandbox"
+echo "──────────────────────"
+echo "This will start Codex with access to:"
+echo "  $HOST_DEV_DIR -> /workspace/dev"
+echo "Working directory in container:"
+echo "  $CONTAINER_WORKDIR"
+echo "Codex config/auth will be mounted from:"
+echo "  $HOST_CODEX_DIR"
+echo "Docker Codex home will persist at:"
+echo "  $HOST_CODEX_DIR/docker-home"
+if [[ -S "$DOCKER_SOCKET" ]]; then
+  echo "Docker socket will be mounted from:"
+  echo "  $DOCKER_SOCKET -> /var/run/docker.sock"
+else
+  echo "Docker socket was not found at:"
+  echo "  $DOCKER_SOCKET"
+fi
+echo
+
+if ! docker info >/dev/null 2>&1; then
+  echo "❌ Docker is not running."
+else
   echo
-  echo "🐳 Codex Docker Sandbox"
-  echo "──────────────────────"
-  echo "This will start Codex with access to:"
-  echo "  $HOST_DIR"
+  echo "Starting container..."
   echo
 
-  if ! docker info >/dev/null 2>&1; then
-    echo "❌ Docker is not running."
-  else
-    if ! docker volume inspect "$CODEX_VOLUME" >/dev/null 2>&1; then
-      echo "🔐 Creating Docker volume '$CODEX_VOLUME' for Codex auth..."
-      docker volume create "$CODEX_VOLUME" >/dev/null
-    fi
-
-    echo
-    echo "Starting container..."
-    echo
-
-    docker run -it --rm \
-      -v "$CODEX_VOLUME:/root/.codex" \
-      -v "$HOST_DIR:/workspace:rw" \
-      -w /workspace \
-      "codex-sandbox"
-  fi
+  docker run -it --rm \
+    -e CODEX_HOME="$DOCKER_CODEX_HOME" \
+    -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
+    -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
+    "${DOCKER_VOLUMES[@]}" \
+    -w "$CONTAINER_WORKDIR" \
+    "$IMAGE"
 fi

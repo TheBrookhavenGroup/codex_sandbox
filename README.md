@@ -2,68 +2,133 @@
 
 Author: Marc Schwarzschild
 
-OpenAI [Codex](https://openai.com/codex/) is an amazing tool useful beyond just having a ChatGPT
-style conversation. It can also read and modify files.  A common use is modifying or writing new
-code. However, unchecked it has full access to all information on the computer it runs on.
-With a couple of simple scripts in this repo codex can be sandboxed restricting access to only
-relevant directories using [Docker](https://www.docker.com/).
+This repo builds a Docker image for running OpenAI Codex with a narrower view of the host
+filesystem.  The container gets the tools Codex needs, a Bash startup file from this repo, and
+controlled mounts for source code and Codex state.
 
-The Dockerfile defines an image that installs dependent code and isolates codex.  Running inside
-Docker it only has access to the `/workspace` root and any subdirectories.  The `docker_codex.zsh`
-Z shell convenience script maps the current working directory on the host computer to the `/workspace`
-directory giving codex access only to the host computer working directory and its children.
+## How It Works
 
-The script will prompt the user to open a sandbox shell and if so, prompts to start codex.
+`Dockerfile` builds the `codex-sandbox` image.  It installs Codex, common development tools,
+`bubblewrap`, the Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
 
-The following few lines added to the `~/.zshrc` runs `docker_codex.zsh` if the directory where zsh is started
-is in the `$HOME/Documents/dev` directory or any of its chidren.  This is nice because an IDE, say PyCharm, shell will
-offer to sandbox the terminal shell and then offer to start codex.
+`docker_codex.zsh` is the host-side launcher.  It mounts:
 
-```zsh
-DEVPATH=$HOME/Documents/dev
-
-run_codex() {
-    if [[ "$PWD" == "$DEVPATH" || "$PWD" == "$DEVPATH"/* ]]; then
-	source "$DEVPATH/codex_sandbox/docker_codex.zsh"
-    fi
-}
-
-run_codex
-
+```text
+~/dev             -> /workspace/dev
+~/.codex          -> /host-codex
+~/.codex/docker-home -> CODEX_HOME inside Docker
+~/.docker/run/docker.sock -> /var/run/docker.sock, when present
 ```
 
-## Install Codex
+When started from inside `~/dev`, the container working directory is set to the matching path under
+`/workspace/dev`.  If started outside `~/dev`, the container starts in `/workspace/dev`.
 
-Follow the [Codex](https://openai.com/codex/) instructions.
+`codex-sandbox-entrypoint.sh` runs inside the container before Bash starts.  It prepares the Docker
+Codex home, seeds a Linux-safe config, strips macOS-only `node_repl` MCP settings, and links shared
+auth, keys, skills, plugins, rules, caches, sessions, and history from the host `~/.codex`.
+It also ensures the Docker Codex config contains a `rally_qa` MCP server that runs:
 
-The [Codex Skills](https://developers.openai.com/codex/skills) has great tips for Codex users.
+```bash
+docker run --rm -i rally-qa-mcp
+```
+
+## Shell Setup
+
+Your `~/.zshrc` defines these helpers:
+
+```zsh
+run_codex() {
+    source "$DEVPATH/tbg/codex_sandbox/docker_codex.zsh"
+}
+
+alias codex=run_codex
+
+build_codex() {
+    cd $DEVPATH/tbg/codex_sandbox
+    echo `pwd`
+    docker build --no-cache -t codex-sandbox .
+}
+
+alias update_codex=build_codex
+```
+
+With that setup:
+
+```zsh
+codex
+```
+
+starts the Docker sandbox, and:
+
+```zsh
+update_codex
+```
+
+rebuilds the image.
 
 ## Build
 
-Use this command to build the Docker image.  Sometimes codex informs us that a new version of codex
-is available and offers to update it.  That would only update it for the one run.  Re-running the follwoing
-`docker build` will make a new Docker image with the latest version of codex so the upgrade would not be
-needed each time the sandbox is started.
-
+Build or refresh the image with:
 
 ```bash
-
 docker build --no-cache -t codex-sandbox .
 ```
 
+The image starts `/bin/bash -il`.  Inside the container, the profile script asks whether to start
+Codex.  Answering yes runs:
+
+```bash
+codex resume --all
+```
+
+When you exit Codex with `/exit`, you return to the Linux Bash prompt inside the container.
+
+## Codex State
+
+Docker Codex uses:
+
+```text
+~/.codex/docker-home
+```
+
+as its persistent `CODEX_HOME` on the Mac.  Its config and SQLite state databases are saved there.
+
+The entrypoint seeds `~/.codex/docker-home/config.toml` from `~/.codex/config.toml` on first use,
+but removes settings that point to the macOS Codex app bundle.  Sessions and history are linked
+from the host `~/.codex`, so `codex resume --all` can see previous Mac sessions.
+
+The launcher mounts Docker Desktop's socket from `~/.docker/run/docker.sock` into the sandbox at
+`/var/run/docker.sock`.  That lets Codex inside `codex-sandbox` start Docker-backed MCP servers,
+including the local `rally-qa-mcp` image.  If your Docker socket lives somewhere else, set:
+
+```zsh
+export CODEX_DOCKER_SOCKET="/path/to/docker.sock"
+```
+
+To use a different host Codex directory:
+
+```zsh
+export CODEX_HOST_DIR="$HOME/.codex-work"
+codex
+```
+
+To use a different host dev directory:
+
+```zsh
+export CODEX_HOST_DEV_DIR="$HOME/dev"
+codex
+```
 
 ## Authentication
 
-Codex needs authentication.  It should only need that once and will save credentials to `~/.codex`.
-
-Use this command to authenticate:
+If Codex is not already authenticated through the shared host Codex directory, run this inside the
+container:
 
 ```bash
-# codex login --device-auth
+codex login --device-auth
 ```
-
 
 ## Stopping
 
-
-Use `Ctrl-D` to exit codex and docker.
+Use `/exit` to leave Codex and return to the Linux shell.  Use `Ctrl-D` or `exit` from that shell to
+leave Docker and return to the Mac prompt.
