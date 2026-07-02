@@ -15,8 +15,7 @@ Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
 
 ```text
 ~/dev             -> /workspace/dev
-~/.codex          -> /host-codex
-~/.codex/docker-home -> CODEX_HOME inside Docker
+~/.codex          -> /host-codex and CODEX_HOME inside Docker
 ~/.docker/run/docker.sock -> /var/run/docker.sock, when present
 ```
 
@@ -24,9 +23,14 @@ When started from inside `~/dev`, the container working directory is set to the 
 `/workspace/dev`.  If started outside `~/dev`, the container starts in `/workspace/dev`.
 
 `codex-sandbox-entrypoint.sh` runs inside the container before Bash starts.  It prepares the Docker
-Codex home, seeds a Linux-safe config, strips macOS-only `node_repl` MCP settings, and links shared
-auth, keys, skills, plugins, rules, caches, sessions, and history from the host `~/.codex`.
-It also ensures the Docker Codex config contains a `rally_qa` MCP server that runs:
+Codex home and points `/root/.codex` at it.  By default, Docker Codex uses the host `~/.codex`
+directly, so config, auth, keys, skills, plugins, rules, caches, sessions, and history all live in
+one persistent Codex home.
+
+If you opt into a separate Docker Codex home with `CODEX_DOCKER_HOME=/host-codex/docker-home`, the
+entrypoint seeds a Linux-safe config, strips macOS-only `node_repl` MCP settings, links shared state
+from the host `~/.codex`, and ensures the Docker Codex config contains a `rally_qa` MCP server that
+runs:
 
 ```bash
 docker run --rm -i rally-qa-mcp
@@ -88,17 +92,22 @@ When you exit Codex with `/exit`, you return to the Linux Bash prompt inside the
 Docker Codex uses:
 
 ```text
-~/.codex/docker-home
+~/.codex
 ```
 
 as its persistent `CODEX_HOME` on the Mac.  Its config and SQLite state databases are saved there.
 
-The entrypoint seeds `~/.codex/docker-home/config.toml` from `~/.codex/config.toml` on first use,
-but removes settings that point to the macOS Codex app bundle.  It also disables Codex's inner
-sandbox by forcing `sandbox_mode = "danger-full-access"` in the Docker Codex config.  Docker is the
-filesystem boundary here: the launcher only mounts the host paths Codex should be allowed to see and
-change.  Sessions and history are linked from the host `~/.codex`, so `codex resume --all` can see
-previous Mac sessions.
+The entrypoint does not rewrite `~/.codex/config.toml` in this default shared-home mode.  If the
+shared config contains host-only settings, make those settings work in both places or start the
+launcher with a separate Docker home:
+
+```zsh
+export CODEX_DOCKER_HOME="/host-codex/docker-home"
+codex
+```
+
+Docker is the filesystem boundary here: the launcher only mounts the host paths Codex should be
+allowed to see and change.
 
 The launcher mounts Docker Desktop's socket from `~/.docker/run/docker.sock` into the sandbox at
 `/var/run/docker.sock`.  That lets Codex inside `codex-sandbox` start Docker-backed MCP servers,
