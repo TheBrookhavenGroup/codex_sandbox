@@ -55,9 +55,9 @@ COPY .bashrc /root/.bashrc
 RUN cat <<'EOF' >/etc/profile.d/codex.sh
 if [[ $- == *i* ]] && [[ -z "$CODEX_PROMPTED" ]] && command -v codex >/dev/null 2>&1; then
   export CODEX_PROMPTED=1
-  read -p "Start Codex CLI? [y/N] " answer
+  read -p "Start Codex CLI? [Y/n] " answer
   case "$answer" in
-    y|Y|yes|YES)
+    ""|y|Y|yes|YES)
       codex resume --all
       ;;
   esac
