@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
     vim \
     bash \
     gnupg \
-    bubblewrap \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
 

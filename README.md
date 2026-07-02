@@ -8,8 +8,8 @@ controlled mounts for source code and Codex state.
 
 ## How It Works
 
-`Dockerfile` builds the `codex-sandbox` image.  It installs Codex, common development tools,
-`bubblewrap`, the Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
+`Dockerfile` builds the `codex-sandbox` image.  It installs Codex, common development tools, the
+Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
 
 `docker_codex.zsh` is the host-side launcher.  It mounts:
 
@@ -94,8 +94,11 @@ Docker Codex uses:
 as its persistent `CODEX_HOME` on the Mac.  Its config and SQLite state databases are saved there.
 
 The entrypoint seeds `~/.codex/docker-home/config.toml` from `~/.codex/config.toml` on first use,
-but removes settings that point to the macOS Codex app bundle.  Sessions and history are linked
-from the host `~/.codex`, so `codex resume --all` can see previous Mac sessions.
+but removes settings that point to the macOS Codex app bundle.  It also disables Codex's inner
+sandbox by forcing `sandbox_mode = "danger-full-access"` in the Docker Codex config.  Docker is the
+filesystem boundary here: the launcher only mounts the host paths Codex should be allowed to see and
+change.  Sessions and history are linked from the host `~/.codex`, so `codex resume --all` can see
+previous Mac sessions.
 
 The launcher mounts Docker Desktop's socket from `~/.docker/run/docker.sock` into the sandbox at
 `/var/run/docker.sock`.  That lets Codex inside `codex-sandbox` start Docker-backed MCP servers,

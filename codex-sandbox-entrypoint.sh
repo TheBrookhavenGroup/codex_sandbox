@@ -56,6 +56,39 @@ if [[ -d "$HOST_CODEX_DIR" ]]; then
 fi
 
 CONFIG_FILE="$CONTAINER_CODEX_DIR/config.toml"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  tmp_config="$(mktemp)"
+  awk '
+    BEGIN { replaced = 0; inserted = 0; in_top_level = 1 }
+    /^\[/ {
+      if (!replaced && !inserted) {
+        print "sandbox_mode = \"danger-full-access\""
+        print ""
+        inserted = 1
+      }
+      in_top_level = 0
+      print
+      next
+    }
+    in_top_level && /^sandbox_mode[[:space:]]*=/ {
+      if (!replaced) {
+        print "sandbox_mode = \"danger-full-access\""
+        replaced = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (!replaced && !inserted) {
+        print ""
+        print "sandbox_mode = \"danger-full-access\""
+      }
+    }
+  ' "$CONFIG_FILE" > "$tmp_config"
+  mv "$tmp_config" "$CONFIG_FILE"
+fi
+
 if [[ -f "$CONFIG_FILE" ]] && ! grep -q '^\[mcp_servers\.rally_qa\]$' "$CONFIG_FILE"; then
   cat >> "$CONFIG_FILE" <<'EOF'
 
