@@ -22,6 +22,19 @@ DOCKER_VOLUMES=(
   -v "$HOST_DEV_DIR:/workspace/dev:rw"
 )
 
+DOCKER_NETWORK_ARGS=(
+  --add-host host.docker.internal:host-gateway
+)
+
+POSTGRES_HOST="${CODEX_POSTGRES_HOST:-host.docker.internal}"
+POSTGRES_PORT="${CODEX_POSTGRES_PORT:-5432}"
+POSTGRES_ENV=(
+  -e PGHOST="$POSTGRES_HOST"
+  -e PGPORT="$POSTGRES_PORT"
+  -e POSTGRES_HOST="$POSTGRES_HOST"
+  -e POSTGRES_PORT="$POSTGRES_PORT"
+)
+
 DOCKER_SOCKET="${CODEX_DOCKER_SOCKET:-$HOME/.docker/run/docker.sock}"
 if [[ -S "$DOCKER_SOCKET" ]]; then
   DOCKER_VOLUMES+=(
@@ -48,6 +61,8 @@ echo "Codex config/auth will be mounted from:"
 echo "  $HOST_CODEX_DIR"
 echo "Docker Codex home will persist at:"
 echo "  $HOST_CODEX_DIR/docker-home"
+echo "Host Postgres will be reachable in the container at:"
+echo "  $POSTGRES_HOST:$POSTGRES_PORT"
 if [[ -S "$DOCKER_SOCKET" ]]; then
   echo "Docker socket will be mounted from:"
   echo "  $DOCKER_SOCKET -> /var/run/docker.sock"
@@ -68,6 +83,8 @@ else
     -e CODEX_HOME="$DOCKER_CODEX_HOME" \
     -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
     -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
+    "${POSTGRES_ENV[@]}" \
+    "${DOCKER_NETWORK_ARGS[@]}" \
     "${DOCKER_VOLUMES[@]}" \
     -w "$CONTAINER_WORKDIR" \
     "$IMAGE"

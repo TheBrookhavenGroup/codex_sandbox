@@ -119,6 +119,41 @@ export CODEX_HOST_DEV_DIR="$HOME/dev"
 codex
 ```
 
+## Host Postgres
+
+The launcher makes Postgres running natively on the Mac reachable from inside the sandbox at:
+
+```text
+host.docker.internal:5432
+```
+
+It also sets these environment variables in the container:
+
+```text
+PGHOST=host.docker.internal
+PGPORT=5432
+POSTGRES_HOST=host.docker.internal
+POSTGRES_PORT=5432
+```
+
+The image is based on `postgres:16`, so it includes a PostgreSQL 16 `psql` client that matches a PostgreSQL 16 server on the Mac.
+After rebuilding the image, verify from inside the container with:
+
+```bash
+psql --version
+psql -d postgres -c "select version();"
+```
+
+Override the defaults before starting Codex if needed:
+
+```zsh
+export CODEX_POSTGRES_HOST="host.docker.internal"
+export CODEX_POSTGRES_PORT="5432"
+codex
+```
+
+On the Mac, Postgres must accept TCP connections on that port. For a standard local setup, make sure it is listening on `localhost` or `*` and that `pg_hba.conf` allows local TCP connections.
+
 ## Authentication
 
 If Codex is not already authenticated through the shared host Codex directory, run this inside the
