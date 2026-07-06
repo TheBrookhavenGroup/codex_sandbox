@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
+    unzip \
     python3 \
     python3-pip \
     ripgrep \
@@ -18,6 +19,22 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------------------
+# Install AWS CLI v2
+# ------------------------------------------------------------
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) aws_arch="x86_64" ;; \
+        arm64) aws_arch="aarch64" ;; \
+        *) echo "Unsupported architecture for AWS CLI: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o /tmp/awscliv2.zip; \
+    unzip -q /tmp/awscliv2.zip -d /tmp; \
+    /tmp/aws/install; \
+    rm -rf /tmp/aws /tmp/awscliv2.zip; \
+    aws --version
 
 # ------------------------------------------------------------
 # Install uv (optional, does NOT replace pip)
