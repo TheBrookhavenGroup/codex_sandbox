@@ -6,8 +6,12 @@ IMAGE="codex-sandbox"
 HOST_DIR="$(pwd -P)"
 HOST_DEV_DIR="${CODEX_HOST_DEV_DIR:-$HOME/dev}"
 HOST_CODEX_DIR="${CODEX_HOST_DIR:-$HOME/.codex}"
+HOST_SDVI_DIR="${CODEX_HOST_SDVI_DIR:-$HOME/.sdvi}"
+HOST_AWS_DIR="${CODEX_HOST_AWS_DIR:-$HOME/.aws}"
 DOCKER_CODEX_HOME="${CODEX_DOCKER_HOME:-/host-codex}"
 mkdir -p "$HOST_CODEX_DIR"
+mkdir -p "$HOST_SDVI_DIR"
+mkdir -p "$HOST_AWS_DIR"
 HOST_CODEX_REAL_DIR="$(cd "$HOST_CODEX_DIR" && pwd -P)"
 
 if [[ ! -d "$HOST_DEV_DIR" ]]; then
@@ -19,6 +23,8 @@ HOST_DEV_REAL_DIR="$(cd "$HOST_DEV_DIR" && pwd -P)"
 
 DOCKER_VOLUMES=(
   -v "$HOST_CODEX_DIR:/host-codex:rw"
+  -v "$HOST_SDVI_DIR:/root/.sdvi:rw"
+  -v "$HOST_AWS_DIR:/root/.aws:rw"
   -v "$HOST_DEV_DIR:/workspace/dev:rw"
 )
 
@@ -59,6 +65,10 @@ echo "Working directory in container:"
 echo "  $CONTAINER_WORKDIR"
 echo "Codex config/auth will be mounted from:"
 echo "  $HOST_CODEX_DIR"
+echo "SDVI config will be mounted from:"
+echo "  $HOST_SDVI_DIR -> /root/.sdvi"
+echo "AWS config/credentials will be mounted from:"
+echo "  $HOST_AWS_DIR -> /root/.aws"
 echo "Docker Codex home will persist at:"
 echo "  $HOST_CODEX_DIR"
 echo "Host Postgres will be reachable in the container at:"
@@ -83,6 +93,8 @@ else
     -e CODEX_HOME="$DOCKER_CODEX_HOME" \
     -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
     -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
+    -e HOST_SDVI_SOURCE_DIR="$HOST_SDVI_DIR" \
+    -e HOST_AWS_SOURCE_DIR="$HOST_AWS_DIR" \
     "${POSTGRES_ENV[@]}" \
     "${DOCKER_NETWORK_ARGS[@]}" \
     "${DOCKER_VOLUMES[@]}" \

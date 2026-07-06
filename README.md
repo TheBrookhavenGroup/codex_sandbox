@@ -16,6 +16,8 @@ Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
 ```text
 ~/dev             -> /workspace/dev
 ~/.codex          -> /host-codex and CODEX_HOME inside Docker
+~/.sdvi           -> /root/.sdvi
+~/.aws            -> /root/.aws
 ~/.docker/run/docker.sock -> /var/run/docker.sock, when present
 ```
 
@@ -30,10 +32,13 @@ one persistent Codex home.
 If you opt into a separate Docker Codex home with `CODEX_DOCKER_HOME=/host-codex/docker-home`, the
 entrypoint seeds a Linux-safe config, strips macOS-only `node_repl` MCP settings, links shared state
 from the host `~/.codex`, and ensures the Docker Codex config contains a `rally_qa` MCP server that
-runs:
+passes SDVI and AWS credentials through to the MCP container's `/home/app` runtime:
 
 ```bash
-docker run --rm -i rally-qa-mcp
+docker run --rm -i \
+  -v "$HOME/.sdvi:/home/app/.sdvi:ro" \
+  -v "$HOME/.aws:/home/app/.aws:ro" \
+  rally-qa-mcp
 ```
 
 ## Shell Setup
@@ -128,6 +133,14 @@ To use a different host dev directory:
 
 ```zsh
 export CODEX_HOST_DEV_DIR="$HOME/dev"
+codex
+```
+
+To use different host SDVI or AWS credential directories:
+
+```zsh
+export CODEX_HOST_SDVI_DIR="$HOME/.sdvi"
+export CODEX_HOST_AWS_DIR="$HOME/.aws"
 codex
 ```
 

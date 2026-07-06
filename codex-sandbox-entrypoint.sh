@@ -88,12 +88,27 @@ if [[ -d "$HOST_CODEX_DIR" && "$CONTAINER_CODEX_DIR" != "$HOST_CODEX_DIR" ]]; th
     mv "$tmp_config" "$CONFIG_FILE"
   fi
 
-  if [[ -f "$CONFIG_FILE" ]] && ! grep -q '^\[mcp_servers\.rally_qa\]$' "$CONFIG_FILE"; then
-    cat >> "$CONFIG_FILE" <<'EOF'
+  if [[ -f "$CONFIG_FILE" ]]; then
+    tmp_config="$(mktemp)"
+    awk '
+      /^\[mcp_servers\.rally_qa(\.|\])/{ skip = 1; next }
+      /^\[/ { skip = 0 }
+      !skip { print }
+    ' "$CONFIG_FILE" > "$tmp_config"
+    mv "$tmp_config" "$CONFIG_FILE"
+
+    rally_sdvi_dir="${HOST_SDVI_SOURCE_DIR:-$HOME/.sdvi}"
+    rally_aws_dir="${HOST_AWS_SOURCE_DIR:-$HOME/.aws}"
+    rally_sdvi_dir="${rally_sdvi_dir//\\/\\\\}"
+    rally_sdvi_dir="${rally_sdvi_dir//\"/\\\"}"
+    rally_aws_dir="${rally_aws_dir//\\/\\\\}"
+    rally_aws_dir="${rally_aws_dir//\"/\\\"}"
+
+    cat >> "$CONFIG_FILE" <<EOF
 
 [mcp_servers.rally_qa]
 command = "docker"
-args = ["run", "--rm", "-i", "rally-qa-mcp"]
+args = ["run", "--rm", "-i", "-v", "$rally_sdvi_dir:/home/app/.sdvi:ro", "-v", "$rally_aws_dir:/home/app/.aws:ro", "rally-qa-mcp"]
 startup_timeout_sec = 120
 EOF
   fi
