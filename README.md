@@ -9,20 +9,39 @@ controlled mounts for source code and Codex state.
 ## How It Works
 
 `Dockerfile` builds the `codex-sandbox` image.  It installs Codex, common development tools, the
-AWS CLI, the Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
+AWS CLI, Git LFS, the GitHub CLI, the Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
 
 `docker_codex.zsh` is the host-side launcher.  It mounts:
 
 ```text
 ~/dev             -> /workspace/dev
+~/dev             -> /root/dev
+~/aen             -> /root/dev/aen, when present
 ~/.codex          -> /host-codex and CODEX_HOME inside Docker
 ~/.sdvi           -> /root/.sdvi
 ~/.aws            -> /root/.aws
+~/.config/gh      -> /root/.config/gh
+~/.gitconfig      -> /root/.gitconfig, when present
+~/.ssh            -> /root/.ssh, when present
+~/dotfiles        -> /root/dotfiles, when present
 ~/.docker/run/docker.sock -> /var/run/docker.sock, when present
 ```
 
 When started from inside `~/dev`, the container working directory is set to the matching path under
-`/workspace/dev`.  If started outside `~/dev`, the container starts in `/workspace/dev`.
+`/root/dev`.  When started from inside `~/aen`, the working directory is set to the matching path
+under `/root/dev/aen`.  This keeps Mac Git config rules such as `includeIf "gitdir:~/dev/aen/"`
+working inside the container even when the project lives at `~/aen` on the Mac.  The `~/dev` tree is
+still available at `/workspace/dev` for compatibility.  If started outside these trees, the
+container starts in `/root/dev`.
+
+The launcher does not modify the Mac `~/.gitconfig`; it only mounts it into the container and maps
+Docker paths so the existing `~/dev/aen` include rule can match.  To make normal Mac-side Git
+commands under `~/aen` use the same AEN config, add this separate include on the Mac:
+
+```gitconfig
+[includeIf "gitdir:~/aen/"]
+    path = ~/dotfiles/.gitconfig_aen
+```
 
 `codex-sandbox-entrypoint.sh` runs inside the container before Bash starts.  It prepares the Docker
 Codex home and points `/root/.codex` at it.  By default, Docker Codex uses the host `~/.codex`
@@ -136,11 +155,38 @@ export CODEX_HOST_DEV_DIR="$HOME/dev"
 codex
 ```
 
+To use a different host AEN directory:
+
+```zsh
+export CODEX_HOST_AEN_DIR="$HOME/aen"
+codex
+```
+
 To use different host SDVI or AWS credential directories:
 
 ```zsh
 export CODEX_HOST_SDVI_DIR="$HOME/.sdvi"
 export CODEX_HOST_AWS_DIR="$HOME/.aws"
+codex
+```
+
+To use a different host Git config file:
+
+```zsh
+export CODEX_HOST_GITCONFIG_FILE="$HOME/.gitconfig"
+codex
+```
+
+Your Mac `credential.helper=osxkeychain` setting is supported in the Linux container by a small
+`git-credential-osxkeychain` shim that delegates to `gh auth git-credential`.  The launcher mounts
+`~/.config/gh` so GitHub CLI auth can persist between runs.
+
+To use different host GitHub CLI, SSH, or dotfiles directories:
+
+```zsh
+export CODEX_HOST_GH_CONFIG_DIR="$HOME/.config/gh"
+export CODEX_HOST_SSH_DIR="$HOME/.ssh"
+export CODEX_HOST_DOTFILES_DIR="$HOME/dotfiles"
 codex
 ```
 

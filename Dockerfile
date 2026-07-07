@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ------------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     git \
+    git-lfs \
     curl \
     ca-certificates \
     unzip \
@@ -19,6 +20,34 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------------------
+# Install GitHub CLI
+# ------------------------------------------------------------
+RUN set -eux; \
+    mkdir -p -m 755 /etc/apt/keyrings; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    apt-get install -y gh; \
+    rm -rf /var/lib/apt/lists/*; \
+    gh --version
+
+RUN cat <<'EOF' >/usr/local/bin/git-credential-osxkeychain
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v gh >/dev/null 2>&1; then
+  exec gh auth git-credential "$@"
+fi
+
+echo "git-credential-osxkeychain is not available in Linux, and gh is not installed" >&2
+exit 1
+EOF
+RUN chmod +x /usr/local/bin/git-credential-osxkeychain
 
 # ------------------------------------------------------------
 # Install AWS CLI v2
