@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     python3 \
     python3-pip \
+    pre-commit \
     ripgrep \
     less \
     vim \

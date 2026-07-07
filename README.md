@@ -8,8 +8,9 @@ controlled mounts for source code and Codex state.
 
 ## How It Works
 
-`Dockerfile` builds the `codex-sandbox` image.  It installs Codex, common development tools, the
-AWS CLI, Git LFS, the GitHub CLI, the Docker CLI, and copies this repo's `.bashrc` to `/root/.bashrc` in the image.
+`Dockerfile` builds the `codex-sandbox` image.  It installs Codex, common development tools,
+pre-commit, the AWS CLI, Git LFS, the GitHub CLI, the Docker CLI, and copies this repo's `.bashrc`
+to `/root/.bashrc` in the image.
 
 `docker_codex.zsh` is the host-side launcher.  It mounts:
 
