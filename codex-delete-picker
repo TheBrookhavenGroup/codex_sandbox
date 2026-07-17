@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -o pipefail
+
+if (( $# > 0 )); then
+  echo "Usage: codex delete-picker" >&2
+  exit 2
+fi
+
+selected="$(
+  CODEX_SESSION_HOME="${HOST_CODEX_DIR:-/host-codex}" python3 - <<'PY' | fzf \
+    --delimiter=$'\t' \
+    --with-nth=2.. \
+    --header='DATE  STATUS  TITLE  DIRECTORY' \
+    --prompt='Delete Codex session> ' \
+    --no-multi
+import glob
+import os
+import sqlite3
+from datetime import datetime
+
+home = os.environ["CODEX_SESSION_HOME"]
+databases = glob.glob(os.path.join(home, "state_*.sqlite"))
+
+if not databases:
+    raise SystemExit(f"No Codex session database found in {home}")
+
+database = max(databases, key=os.path.getmtime)
+connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+
+query = """
+SELECT id, updated_at, title, cwd, archived
+FROM threads
+ORDER BY updated_at DESC
+"""
+
+for session_id, updated, title, cwd, archived in connection.execute(query):
+    date = datetime.fromtimestamp(updated).strftime("%Y-%m-%d %H:%M")
+    title = (title or "(untitled)").replace("\t", " ").replace("\n", " ")
+    cwd = (cwd or "").replace("\t", " ").replace("\n", " ")
+    status = "archived" if archived else "active"
+    print(f"{session_id}\t{date}\t{status}\t{title}\t{cwd}")
+PY
+)" || {
+  # Esc/q in fzf is a normal cancellation, not a launcher error.
+  exit 0
+}
+
+session_id="${selected%%$'\t'*}"
+if [[ -z "$session_id" ]]; then
+  exit 0
+fi
+
+exec codex delete "$session_id"

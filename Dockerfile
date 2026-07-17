@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     python3 \
     python3-pip \
+    fzf \
     pre-commit \
     ripgrep \
     less \
@@ -92,7 +93,8 @@ RUN npm install -g @openai/codex
 # Prepare Codex home from the host-mounted Mac config
 # ------------------------------------------------------------
 COPY codex-sandbox-entrypoint.sh /usr/local/bin/codex-sandbox-entrypoint
-RUN chmod +x /usr/local/bin/codex-sandbox-entrypoint
+COPY codex-delete-picker /usr/local/bin/codex-delete-picker
+RUN chmod +x /usr/local/bin/codex-sandbox-entrypoint /usr/local/bin/codex-delete-picker
 COPY .bashrc /root/.bashrc
 
 # ------------------------------------------------------------

@@ -67,7 +67,7 @@ Your `~/.zshrc` defines these helpers:
 
 ```zsh
 run_codex() {
-    source "$DEVPATH/tbg/codex_sandbox/docker_codex.zsh"
+    source "$DEVPATH/tbg/codex_sandbox/docker_codex.zsh" "$@"
 }
 
 alias codex=run_codex
@@ -80,6 +80,21 @@ build_codex() {
 
 alias update_codex=build_codex
 ```
+
+The launcher also provides an interactive session-deletion picker. A bare
+`codex delete` opens the picker; passing a session ID or name continues to use
+the native CLI behavior. The picker reads the host Codex session index without
+modifying it, then runs the selected deletion through the Codex CLI in the
+container:
+
+```zsh
+codex delete
+# or
+codex delete-picker
+```
+
+The picker and Codex CLI both run inside the container. No host installation
+of Codex, `fzf`, or Python is used.
 
 With that setup:
 

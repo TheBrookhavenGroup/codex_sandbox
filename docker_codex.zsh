@@ -1,6 +1,8 @@
 #!/usr/bin/env zsh
 
-set -euo pipefail
+_docker_codex_main() {
+emulate -L zsh
+setopt PIPE_FAIL
 
 IMAGE="codex-sandbox"
 HOST_DIR="$(pwd -P)"
@@ -14,6 +16,19 @@ HOST_GH_CONFIG_DIR="${CODEX_HOST_GH_CONFIG_DIR:-$HOME/.config/gh}"
 HOST_SSH_DIR="${CODEX_HOST_SSH_DIR:-$HOME/.ssh}"
 HOST_DOTFILES_DIR="${CODEX_HOST_DOTFILES_DIR:-$HOME/dotfiles}"
 DOCKER_CODEX_HOME="${CODEX_DOCKER_HOME:-/host-codex}"
+
+# Preserve the image's default interactive shell when invoked with no
+# arguments. When the launcher receives arguments, forward them verbatim to
+# the Codex CLI so subcommands, flags, and prompts behave like the native CLI.
+CONTAINER_COMMAND=()
+if [[ "${1:-}" == "delete-picker" ]]; then
+  CONTAINER_COMMAND=(codex-delete-picker "${@:2}")
+elif [[ "${1:-}" == "delete" && $# -eq 1 ]]; then
+  CONTAINER_COMMAND=(codex-delete-picker)
+elif (( $# > 0 )); then
+  CONTAINER_COMMAND=(codex "$@")
+fi
+
 mkdir -p "$HOST_CODEX_DIR"
 mkdir -p "$HOST_SDVI_DIR"
 mkdir -p "$HOST_AWS_DIR"
@@ -187,5 +202,15 @@ else
     "${DOCKER_NETWORK_ARGS[@]}" \
     "${DOCKER_VOLUMES[@]}" \
     -w "$CONTAINER_WORKDIR" \
-    "$IMAGE"
+    "$IMAGE" \
+    "${CONTAINER_COMMAND[@]}"
 fi
+}
+
+# Keep launcher options local to the function. This file is normally sourced
+# by an alias, so changing options at file scope would otherwise leak into the
+# interactive shell.
+_docker_codex_main "$@"
+_docker_codex_status=$?
+unfunction _docker_codex_main
+return "$_docker_codex_status" 2>/dev/null || exit "$_docker_codex_status"
