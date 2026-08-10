@@ -3,6 +3,7 @@ set -euo pipefail
 
 HOST_CODEX_DIR="${HOST_CODEX_DIR:-/host-codex}"
 CONTAINER_CODEX_DIR="${CODEX_HOME:-$HOST_CODEX_DIR}"
+SANDBOX_CONFIG_FILE="/etc/codex-sandbox/codex_sandbox.cfg"
 export HOST_CODEX_DIR
 
 mkdir -p "$CONTAINER_CODEX_DIR"
@@ -55,62 +56,65 @@ if [[ -d "$HOST_CODEX_DIR" && "$CONTAINER_CODEX_DIR" != "$HOST_CODEX_DIR" ]]; th
   fi
 
   CONFIG_FILE="$CONTAINER_CODEX_DIR/config.toml"
+  touch "$CONFIG_FILE"
 
-  if [[ -f "$CONFIG_FILE" ]]; then
+  tmp_config="$(mktemp)"
+  awk '
+    BEGIN { replaced = 0; inserted = 0; in_top_level = 1 }
+    /^\[/ {
+      if (!replaced && !inserted) {
+        print "sandbox_mode = \"danger-full-access\""
+        print ""
+        inserted = 1
+      }
+      in_top_level = 0
+      print
+      next
+    }
+    in_top_level && /^sandbox_mode[[:space:]]*=/ {
+      if (!replaced) {
+        print "sandbox_mode = \"danger-full-access\""
+        replaced = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (!replaced && !inserted) {
+        print ""
+        print "sandbox_mode = \"danger-full-access\""
+      }
+    }
+  ' "$CONFIG_FILE" > "$tmp_config"
+  mv "$tmp_config" "$CONFIG_FILE"
+
+  if [[ -f "$SANDBOX_CONFIG_FILE" ]]; then
     tmp_config="$(mktemp)"
     awk '
-      BEGIN { replaced = 0; inserted = 0; in_top_level = 1 }
-      /^\[/ {
-        if (!replaced && !inserted) {
-          print "sandbox_mode = \"danger-full-access\""
-          print ""
-          inserted = 1
-        }
-        in_top_level = 0
-        print
-        next
-      }
-      in_top_level && /^sandbox_mode[[:space:]]*=/ {
-        if (!replaced) {
-          print "sandbox_mode = \"danger-full-access\""
-          replaced = 1
-        }
-        next
-      }
-      { print }
-      END {
-        if (!replaced && !inserted) {
-          print ""
-          print "sandbox_mode = \"danger-full-access\""
-        }
-      }
-    ' "$CONFIG_FILE" > "$tmp_config"
-    mv "$tmp_config" "$CONFIG_FILE"
-  fi
-
-  if [[ -f "$CONFIG_FILE" ]]; then
-    tmp_config="$(mktemp)"
-    awk '
-      /^\[mcp_servers\.rally_qa(\.|\])/{ skip = 1; next }
+      /^\[mcp_servers\./ { skip = 1; next }
       /^\[/ { skip = 0 }
       !skip { print }
     ' "$CONFIG_FILE" > "$tmp_config"
+
+    host_sdvi_dir="${HOST_SDVI_SOURCE_DIR:-$HOME/.sdvi}"
+    host_aws_dir="${HOST_AWS_SOURCE_DIR:-$HOME/.aws}"
+    host_sdvi_dir="${host_sdvi_dir//\\/\\\\}"
+    host_sdvi_dir="${host_sdvi_dir//&/\\&}"
+    host_sdvi_dir="${host_sdvi_dir//|/\\|}"
+    host_aws_dir="${host_aws_dir//\\/\\\\}"
+    host_aws_dir="${host_aws_dir//&/\\&}"
+    host_aws_dir="${host_aws_dir//|/\\|}"
+
+    printf '\n' >> "$tmp_config"
+    awk '
+      /^\[mcp_servers\./ { in_mcp = 1 }
+      /^\[/ && !/^\[mcp_servers\./ { in_mcp = 0 }
+      in_mcp { print }
+    ' "$SANDBOX_CONFIG_FILE" | sed \
+        -e "s|@HOST_SDVI_DIR@|$host_sdvi_dir|g" \
+        -e "s|@HOST_AWS_DIR@|$host_aws_dir|g" \
+        >> "$tmp_config"
     mv "$tmp_config" "$CONFIG_FILE"
-
-    rally_sdvi_dir="${HOST_SDVI_SOURCE_DIR:-$HOME/.sdvi}"
-    rally_aws_dir="${HOST_AWS_SOURCE_DIR:-$HOME/.aws}"
-    rally_sdvi_dir="${rally_sdvi_dir//\\/\\\\}"
-    rally_sdvi_dir="${rally_sdvi_dir//\"/\\\"}"
-    rally_aws_dir="${rally_aws_dir//\\/\\\\}"
-    rally_aws_dir="${rally_aws_dir//\"/\\\"}"
-
-    cat >> "$CONFIG_FILE" <<EOF
-
-[mcp_servers.rally_qa]
-command = "docker"
-args = ["run", "--rm", "-i", "-v", "$rally_sdvi_dir:/home/app/.sdvi:ro", "-v", "$rally_aws_dir:/home/app/.aws:ro", "rally-qa-mcp"]
-startup_timeout_sec = 120
-EOF
   fi
 fi
 

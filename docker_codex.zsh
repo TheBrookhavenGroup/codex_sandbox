@@ -4,18 +4,92 @@ _docker_codex_main() {
 emulate -L zsh
 setopt PIPE_FAIL
 
-IMAGE="codex-sandbox"
 HOST_DIR="$(pwd -P)"
-HOST_DEV_DIR="${CODEX_HOST_DEV_DIR:-$HOME/dev}"
-HOST_AEN_DIR="${CODEX_HOST_AEN_DIR:-$HOME/aen}"
-HOST_CODEX_DIR="${CODEX_HOST_DIR:-$HOME/.codex}"
-HOST_SDVI_DIR="${CODEX_HOST_SDVI_DIR:-$HOME/.sdvi}"
-HOST_AWS_DIR="${CODEX_HOST_AWS_DIR:-$HOME/.aws}"
-HOST_GITCONFIG_FILE="${CODEX_HOST_GITCONFIG_FILE:-$HOME/.gitconfig}"
-HOST_GH_CONFIG_DIR="${CODEX_HOST_GH_CONFIG_DIR:-$HOME/.config/gh}"
-HOST_SSH_DIR="${CODEX_HOST_SSH_DIR:-$HOME/.ssh}"
-HOST_DOTFILES_DIR="${CODEX_HOST_DOTFILES_DIR:-$HOME/dotfiles}"
-DOCKER_CODEX_HOME="${CODEX_DOCKER_HOME:-/host-codex}"
+SANDBOX_CONFIG_FILE="$HOME/.config/codex_sandbox.cfg"
+LAUNCHER_DIR="${${(%):-%x}:A:h}"
+
+if [[ ! -f "$SANDBOX_CONFIG_FILE" ]]; then
+  echo "❌ Codex sandbox configuration was not found:"
+  echo "  $SANDBOX_CONFIG_FILE"
+  echo
+  echo "Create it from the supplied template:"
+  echo "  mkdir -p $HOME/.config"
+  echo "  cp $LAUNCHER_DIR/codex_sandbox.cfg.example $SANDBOX_CONFIG_FILE"
+  return 1 2>/dev/null || exit 1
+fi
+
+IMAGE=""
+HOST_DEV_DIR=""
+HOST_AEN_DIR=""
+HOST_CODEX_DIR=""
+HOST_SDVI_DIR=""
+HOST_AWS_DIR=""
+HOST_GITCONFIG_FILE=""
+HOST_GH_CONFIG_DIR=""
+HOST_SSH_DIR=""
+HOST_DOTFILES_DIR=""
+DOCKER_CODEX_HOME=""
+POSTGRES_HOST=""
+POSTGRES_PORT=""
+DOCKER_SOCKET=""
+
+while IFS=$'\t' read -r config_key config_value; do
+  [[ "$config_value" == "~/"* ]] && config_value="$HOME/${config_value#\~/}"
+  case "$config_key" in
+    image) IMAGE="$config_value" ;;
+    host_dev_dir) HOST_DEV_DIR="$config_value" ;;
+    host_aen_dir) HOST_AEN_DIR="$config_value" ;;
+    host_codex_dir) HOST_CODEX_DIR="$config_value" ;;
+    host_sdvi_dir) HOST_SDVI_DIR="$config_value" ;;
+    host_aws_dir) HOST_AWS_DIR="$config_value" ;;
+    host_gitconfig_file) HOST_GITCONFIG_FILE="$config_value" ;;
+    host_gh_config_dir) HOST_GH_CONFIG_DIR="$config_value" ;;
+    host_ssh_dir) HOST_SSH_DIR="$config_value" ;;
+    host_dotfiles_dir) HOST_DOTFILES_DIR="$config_value" ;;
+    docker_codex_home) DOCKER_CODEX_HOME="$config_value" ;;
+    docker_socket) DOCKER_SOCKET="$config_value" ;;
+    postgres_host) POSTGRES_HOST="$config_value" ;;
+    postgres_port) POSTGRES_PORT="$config_value" ;;
+  esac
+done < <(
+  awk '
+    /^\[sandbox\][[:space:]]*$/ { in_sandbox = 1; next }
+    /^\[/ { in_sandbox = 0 }
+    in_sandbox && /^[[:space:]]*[a-z_]+[[:space:]]*=/ {
+      key = $0
+      sub(/[[:space:]]*=.*/, "", key)
+      sub(/^[[:space:]]*/, "", key)
+      value = $0
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]*#[^\"]*$/, "", value)
+      sub(/^[\"]/, "", value)
+      sub(/[\"][[:space:]]*$/, "", value)
+      print key "\t" value
+    }
+  ' "$SANDBOX_CONFIG_FILE"
+)
+
+missing_settings=()
+[[ -z "$IMAGE" ]] && missing_settings+=(image)
+[[ -z "$HOST_DEV_DIR" ]] && missing_settings+=(host_dev_dir)
+[[ -z "$HOST_AEN_DIR" ]] && missing_settings+=(host_aen_dir)
+[[ -z "$HOST_CODEX_DIR" ]] && missing_settings+=(host_codex_dir)
+[[ -z "$HOST_SDVI_DIR" ]] && missing_settings+=(host_sdvi_dir)
+[[ -z "$HOST_AWS_DIR" ]] && missing_settings+=(host_aws_dir)
+[[ -z "$HOST_GITCONFIG_FILE" ]] && missing_settings+=(host_gitconfig_file)
+[[ -z "$HOST_GH_CONFIG_DIR" ]] && missing_settings+=(host_gh_config_dir)
+[[ -z "$HOST_SSH_DIR" ]] && missing_settings+=(host_ssh_dir)
+[[ -z "$HOST_DOTFILES_DIR" ]] && missing_settings+=(host_dotfiles_dir)
+[[ -z "$DOCKER_CODEX_HOME" ]] && missing_settings+=(docker_codex_home)
+[[ -z "$DOCKER_SOCKET" ]] && missing_settings+=(docker_socket)
+[[ -z "$POSTGRES_HOST" ]] && missing_settings+=(postgres_host)
+[[ -z "$POSTGRES_PORT" ]] && missing_settings+=(postgres_port)
+
+if (( ${#missing_settings[@]} > 0 )); then
+  echo "❌ Missing required settings in $SANDBOX_CONFIG_FILE:"
+  printf '  %s\n' "${missing_settings[@]}"
+  return 1 2>/dev/null || exit 1
+fi
 
 # Preserve the image's default interactive shell when invoked with no
 # arguments. When the launcher receives arguments, forward them verbatim to
@@ -61,6 +135,10 @@ DOCKER_VOLUMES=(
   -v "$HOST_GH_CONFIG_DIR:/root/.config/gh:rw"
 )
 
+DOCKER_VOLUMES+=(
+  -v "$SANDBOX_CONFIG_FILE:/etc/codex-sandbox/codex_sandbox.cfg:ro"
+)
+
 if [[ -n "$HOST_DEV_REAL_DIR" ]]; then
   DOCKER_VOLUMES+=(
     -v "$HOST_DEV_DIR:/workspace/dev:rw"
@@ -96,8 +174,6 @@ DOCKER_NETWORK_ARGS=(
   --add-host host.docker.internal:host-gateway
 )
 
-POSTGRES_HOST="${CODEX_POSTGRES_HOST:-host.docker.internal}"
-POSTGRES_PORT="${CODEX_POSTGRES_PORT:-5432}"
 POSTGRES_ENV=(
   -e PGHOST="$POSTGRES_HOST"
   -e PGPORT="$POSTGRES_PORT"
@@ -105,7 +181,6 @@ POSTGRES_ENV=(
   -e POSTGRES_PORT="$POSTGRES_PORT"
 )
 
-DOCKER_SOCKET="${CODEX_DOCKER_SOCKET:-$HOME/.docker/run/docker.sock}"
 if [[ -S "$DOCKER_SOCKET" ]]; then
   DOCKER_VOLUMES+=(
     -v "$DOCKER_SOCKET:/var/run/docker.sock:rw"
@@ -173,7 +248,15 @@ else
   echo "  $HOST_DOTFILES_DIR"
 fi
 echo "Docker Codex home will persist at:"
-echo "  $HOST_CODEX_DIR"
+if [[ "$DOCKER_CODEX_HOME" == "/host-codex" ]]; then
+  echo "  $HOST_CODEX_DIR"
+elif [[ "$DOCKER_CODEX_HOME" == "/host-codex/"* ]]; then
+  echo "  $HOST_CODEX_DIR/${DOCKER_CODEX_HOME#/host-codex/}"
+else
+  echo "  $DOCKER_CODEX_HOME (inside the container)"
+fi
+echo "Sandbox configuration will be loaded from:"
+echo "  $SANDBOX_CONFIG_FILE"
 echo "Host Postgres will be reachable in the container at:"
 echo "  $POSTGRES_HOST:$POSTGRES_PORT"
 if [[ -S "$DOCKER_SOCKET" ]]; then
