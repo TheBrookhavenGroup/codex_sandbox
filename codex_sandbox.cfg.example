@@ -1,0 +1,59 @@
+# Copy this file to ~/.config/codex_sandbox.cfg on the host Mac.
+
+[sandbox]
+image = "codex-sandbox"
+host_dev_dir = "~/dev"
+host_aen_dir = "~/aen"
+host_codex_dir = "~/.codex"
+host_sdvi_dir = "~/.sdvi"
+host_aws_dir = "~/.aws"
+host_gitconfig_file = "~/.gitconfig"
+host_gh_config_dir = "~/.config/gh"
+host_ssh_dir = "~/.ssh"
+host_dotfiles_dir = "~/dotfiles"
+docker_codex_home = "/host-codex/docker-home"
+docker_socket = "~/.docker/run/docker.sock"
+postgres_host = "host.docker.internal"
+postgres_port = "5432"
+
+# Add any number of standard Codex MCP server tables below. Host paths used by
+# nested Docker commands can use @HOST_SDVI_DIR@ and @HOST_AWS_DIR@.
+
+[mcp_servers.rally_dev]
+command = "docker"
+args = [
+  "run", "--rm", "-i",
+  "-e", "RALLY_PROFILE=dev",
+  "-e", "RALLY_READ_ONLY=false",
+  "-e", "RALLY_ALLOW_UNSAFE_TOOLS=true",
+  "-v", "@HOST_SDVI_DIR@:/home/app/.sdvi:ro",
+  "-v", "@HOST_AWS_DIR@:/home/app/.aws:ro",
+  "rally-qa-mcp",
+]
+startup_timeout_sec = 120
+
+[mcp_servers.rally_qa]
+command = "docker"
+args = [
+  "run", "--rm", "-i",
+  "-e", "RALLY_PROFILE=qa",
+  "-e", "RALLY_READ_ONLY=true",
+  "-e", "RALLY_ALLOW_UNSAFE_TOOLS=true",
+  "-v", "@HOST_SDVI_DIR@:/home/app/.sdvi:ro",
+  "-v", "@HOST_AWS_DIR@:/home/app/.aws:ro",
+  "rally-qa-mcp",
+]
+startup_timeout_sec = 120
+
+[mcp_servers.rally_prod]
+command = "docker"
+args = [
+  "run", "--rm", "-i",
+  "-e", "RALLY_PROFILE=prod",
+  "-e", "RALLY_READ_ONLY=true",
+  "-e", "RALLY_ALLOW_UNSAFE_TOOLS=true",
+  "-v", "@HOST_SDVI_DIR@:/home/app/.sdvi:ro",
+  "-v", "@HOST_AWS_DIR@:/home/app/.aws:ro",
+  "rally-qa-mcp",
+]
+startup_timeout_sec = 120

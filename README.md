@@ -44,24 +44,40 @@ commands under `~/aen` use the same AEN config, add this separate include on the
     path = ~/dotfiles/.gitconfig_aen
 ```
 
-`codex-sandbox-entrypoint.sh` runs inside the container before Bash starts.  It prepares the Docker
-Codex home and points `/root/.codex` at it.  By default, Docker Codex uses the host `~/.codex`
-directly, so config, auth, keys, skills, plugins, rules, caches, sessions, and history all live in
-one persistent Codex home.
+`codex-sandbox-entrypoint.sh` runs inside the container before Bash starts. It prepares a
+Docker-specific Codex home under the host's `~/.codex/docker-home` and points `/root/.codex` at it.
+Auth, keys, skills, plugins, rules, caches, sessions, and history remain shared with the host Codex
+home through links.
 
-If you opt into a separate Docker Codex home with `CODEX_DOCKER_HOME=/host-codex/docker-home`, the
-entrypoint seeds a Linux-safe config, strips macOS-only `node_repl` MCP settings, links shared state
-from the host `~/.codex`, and ensures the Docker Codex config contains a `rally_qa` MCP server that
-passes SDVI and AWS credentials through to the MCP container's `/home/app` runtime:
+Docker Codex uses a separate home at `/host-codex/docker-home`. The launcher reads all user-specific
+settings and MCP definitions from `~/.config/codex_sandbox.cfg`. The entrypoint seeds a Linux-safe
+Codex config, strips inherited MCP settings, links shared state from the host `~/.codex`, and loads
+the MCP tables from that file. The example defines `rally_dev`, `rally_qa`, and `rally_prod`. Dev
+permits confirmed writes, while QA and production enforce read-only access. All three pass SDVI and
+AWS credentials through to the MCP container's `/home/app` runtime:
 
 ```bash
 docker run --rm -i \
+  -e RALLY_PROFILE=qa \
+  -e RALLY_READ_ONLY=true \
+  -e RALLY_ALLOW_UNSAFE_TOOLS=true \
   -v "$HOME/.sdvi:/home/app/.sdvi:ro" \
   -v "$HOME/.aws:/home/app/.aws:ro" \
   rally-qa-mcp
 ```
 
 ## Shell Setup
+
+Create the user configuration once on the host Mac:
+
+```zsh
+mkdir -p ~/.config
+cp "$DEVPATH/tbg/codex_sandbox/codex_sandbox.cfg.example" \
+  ~/.config/codex_sandbox.cfg
+```
+
+Edit that one file to change host paths, the image, Docker Codex home, Docker socket, Postgres
+connection, or MCP servers. Values beginning with `~/` are expanded against the host home directory.
 
 Your `~/.zshrc` defines these helpers:
 
@@ -129,82 +145,35 @@ When you exit Codex with `/exit`, you return to the Linux Bash prompt inside the
 
 ## Codex State
 
-Docker Codex uses:
+The host Codex state is mounted at:
 
 ```text
-~/.codex
+~/.codex/docker-home
 ```
 
-as its persistent `CODEX_HOME` on the Mac.  Its config and SQLite state databases are saved there.
+as Docker Codex's persistent `CODEX_HOME`.
 
-The entrypoint does not rewrite `~/.codex/config.toml` in this default shared-home mode.  If the
-shared config contains host-only settings, make those settings work in both places or start the
-launcher with a separate Docker home:
+The entrypoint does not rewrite the host `~/.codex/config.toml`. It creates the Docker-specific
+configuration under `~/.codex/docker-home`, retaining compatible non-MCP settings and replacing
+the inherited MCP sections with the contents of `~/.config/codex_sandbox.cfg` on every start.
 
-```zsh
-export CODEX_DOCKER_HOME="/host-codex/docker-home"
-codex
-```
+The config supports `@HOST_SDVI_DIR@` and `@HOST_AWS_DIR@` placeholders in MCP tables. These expand to the
+original host paths, which is required for bind mounts made by nested Docker commands. Literal
+paths and MCP servers that do not use Docker can be written normally.
 
 Docker is the filesystem boundary here: the launcher only mounts the host paths Codex should be
 allowed to see and change.
 
-The launcher mounts Docker Desktop's socket from `~/.docker/run/docker.sock` into the sandbox at
-`/var/run/docker.sock`.  That lets Codex inside `codex-sandbox` start Docker-backed MCP servers,
-including the local `rally-qa-mcp` image.  If your Docker socket lives somewhere else, set:
-
-```zsh
-export CODEX_DOCKER_SOCKET="/path/to/docker.sock"
-```
-
-To use a different host Codex directory:
-
-```zsh
-export CODEX_HOST_DIR="$HOME/.codex-work"
-codex
-```
-
-To use a different host dev directory:
-
-```zsh
-export CODEX_HOST_DEV_DIR="$HOME/dev"
-codex
-```
-
-To use a different host AEN directory:
-
-```zsh
-export CODEX_HOST_AEN_DIR="$HOME/aen"
-codex
-```
-
-To use different host SDVI or AWS credential directories:
-
-```zsh
-export CODEX_HOST_SDVI_DIR="$HOME/.sdvi"
-export CODEX_HOST_AWS_DIR="$HOME/.aws"
-codex
-```
-
-To use a different host Git config file:
-
-```zsh
-export CODEX_HOST_GITCONFIG_FILE="$HOME/.gitconfig"
-codex
-```
+The launcher mounts the Docker Desktop socket configured by `docker_socket` into the sandbox at
+`/var/run/docker.sock`. That lets Codex inside `codex-sandbox` start Docker-backed MCP servers,
+including the local `rally-qa-mcp` image. All mount source paths are controlled by the `[sandbox]`
+table in `~/.config/codex_sandbox.cfg`.
 
 Your Mac `credential.helper=osxkeychain` setting is supported in the Linux container by a small
 `git-credential-osxkeychain` shim that delegates to `gh auth git-credential`.  The launcher mounts
 `~/.config/gh` so GitHub CLI auth can persist between runs.
 
-To use different host GitHub CLI, SSH, or dotfiles directories:
-
-```zsh
-export CODEX_HOST_GH_CONFIG_DIR="$HOME/.config/gh"
-export CODEX_HOST_SSH_DIR="$HOME/.ssh"
-export CODEX_HOST_DOTFILES_DIR="$HOME/dotfiles"
-codex
-```
+Host GitHub CLI, SSH, and dotfiles locations are also configured in that `[sandbox]` table.
 
 ## Host Postgres
 
@@ -231,13 +200,7 @@ psql --version
 psql -d postgres -c "select version();"
 ```
 
-Override the defaults before starting Codex if needed:
-
-```zsh
-export CODEX_POSTGRES_HOST="host.docker.internal"
-export CODEX_POSTGRES_PORT="5432"
-codex
-```
+Override `postgres_host` and `postgres_port` in `~/.config/codex_sandbox.cfg` if needed.
 
 On the Mac, Postgres must accept TCP connections on that port. For a standard local setup, make sure it is listening on `localhost` or `*` and that `pg_hba.conf` allows local TCP connections.
 
