@@ -44,15 +44,12 @@ commands under `~/aen` use the same AEN config, add this separate include on the
     path = ~/dotfiles/.gitconfig_aen
 ```
 
-`codex-sandbox-entrypoint.sh` runs inside the container before Bash starts. It prepares a
-Docker-specific Codex home under the host's `~/.codex/docker-home` and points `/root/.codex` at it.
-Auth, keys, skills, plugins, rules, caches, sessions, and history remain shared with the host Codex
-home through links.
-
-Docker Codex uses a separate home at `/host-codex/docker-home`. The launcher reads all user-specific
-settings and MCP definitions from `~/.config/codex_sandbox.cfg`. The entrypoint seeds a Linux-safe
-Codex config, strips inherited MCP settings, links shared state from the host `~/.codex`, and loads
-the MCP tables from that file. The example defines `rally_dev`, `rally_qa`, and `rally_prod`. Dev
+`codex-sandbox-entrypoint.sh` runs inside the container before Bash starts. The host's `~/.codex`
+is the persistent Codex home and is mounted at `/host-codex`; `/root/.codex` points to that same
+directory. The launcher reads sandbox settings and MCP definitions from
+`~/.config/codex_sandbox.cfg`. On every start, the entrypoint updates `~/.codex/config.toml` with
+Linux-safe sandbox settings, replaces its MCP sections with the tables from that file, and leaves
+all other Codex state in place. The example defines `rally_dev`, `rally_qa`, and `rally_prod`. Dev
 permits confirmed writes, while QA and production enforce read-only access. All three pass SDVI and
 AWS credentials through to the MCP container's `/home/app` runtime:
 
@@ -145,17 +142,17 @@ When you exit Codex with `/exit`, you return to the Linux Bash prompt inside the
 
 ## Codex State
 
-The host Codex state is mounted at:
+The persistent Codex home on the Mac is:
 
 ```text
-~/.codex/docker-home
+~/.codex
 ```
 
-as Docker Codex's persistent `CODEX_HOME`.
+It is mounted at `/host-codex`, which is Docker Codex's `CODEX_HOME`.
 
-The entrypoint does not rewrite the host `~/.codex/config.toml`. It creates the Docker-specific
-configuration under `~/.codex/docker-home`, retaining compatible non-MCP settings and replacing
-the inherited MCP sections with the contents of `~/.config/codex_sandbox.cfg` on every start.
+The entrypoint updates `~/.codex/config.toml` atomically on every start. It retains non-MCP
+settings, forces the sandbox mode appropriate for the container, and replaces MCP sections with
+the contents of `~/.config/codex_sandbox.cfg`.
 
 The config supports `@HOST_SDVI_DIR@` and `@HOST_AWS_DIR@` placeholders in MCP tables. These expand to the
 original host paths, which is required for bind mounts made by nested Docker commands. Literal
