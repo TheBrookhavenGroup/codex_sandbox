@@ -3,7 +3,10 @@
 [sandbox]
 image = "codex-sandbox"
 host_dev_dir = "~/dev"
-host_aen_dir = "~/aen"
+# Optional: mount at the same absolute path to preserve Mac symlink targets.
+host_dirs = [
+  "~/Library/Mobile Documents/com~apple~CloudDocs/DevCloud",
+]
 host_codex_dir = "~/.codex"
 host_sdvi_dir = "~/.sdvi"
 host_aws_dir = "~/.aws"

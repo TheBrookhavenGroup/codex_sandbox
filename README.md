@@ -17,32 +17,24 @@ to `/root/.bashrc` in the image.
 ```text
 ~/dev             -> /workspace/dev
 ~/dev             -> /root/dev
-~/aen             -> /root/dev/aen, when present
 ~/.codex          -> /host-codex and CODEX_HOME inside Docker
 ~/.sdvi           -> /root/.sdvi
 ~/.aws            -> /root/.aws
 ~/.config/gh      -> /root/.config/gh
 ~/.gitconfig      -> /root/.gitconfig, when present
 ~/.ssh            -> /root/.ssh, when present
-~/dotfiles        -> /root/dotfiles, when present
+~/dotfiles        -> /root/dotfiles, read-write when present
 ~/.docker/run/docker.sock -> /var/run/docker.sock, when present
 ```
 
 When started from inside `~/dev`, the container working directory is set to the matching path under
-`/root/dev`.  When started from inside `~/aen`, the working directory is set to the matching path
-under `/root/dev/aen`.  This keeps Mac Git config rules such as `includeIf "gitdir:~/dev/aen/"`
-working inside the container even when the project lives at `~/aen` on the Mac.  The `~/dev` tree is
-still available at `/workspace/dev` for compatibility.  If started outside these trees, the
-container starts in `/root/dev`.
+`/root/dev`. This includes `~/dev/aen`, which needs no separate mount. The `~/dev` tree is
+also available at `/workspace/dev` for compatibility. When started from an additional
+`host_dirs` directory, the container keeps its physical working directory; otherwise it
+starts in `/root/dev`.
 
-The launcher does not modify the Mac `~/.gitconfig`; it only mounts it into the container and maps
-Docker paths so the existing `~/dev/aen` include rule can match.  To make normal Mac-side Git
-commands under `~/aen` use the same AEN config, add this separate include on the Mac:
-
-```gitconfig
-[includeIf "gitdir:~/aen/"]
-    path = ~/dotfiles/.gitconfig_aen
-```
+The launcher mounts the Mac `~/.gitconfig` without modifying it. Existing Git config rules
+such as `includeIf "gitdir:~/dev/aen/"` can match the corresponding container path.
 
 `codex-sandbox-entrypoint.sh` runs inside the container before Bash starts. The host's `~/.codex`
 is the persistent Codex home and is mounted at `/host-codex`; `/root/.codex` points to that same
@@ -75,6 +67,24 @@ cp "$DEVPATH/tbg/codex_sandbox/codex_sandbox.cfg.example" \
 
 Edit that one file to change host paths, the image, Docker Codex home, Docker socket, Postgres
 connection, or MCP servers. Values beginning with `~/` are expanded against the host home directory.
+
+The host launcher requires Python 3.11 or newer to parse the TOML configuration.
+Use the optional `host_dirs` list in `[sandbox]` for additional directories:
+
+```toml
+host_dirs = [
+  "~/Library/Mobile Documents/com~apple~CloudDocs/DevCloud",
+]
+```
+
+Each directory is mounted read-write at its original absolute Mac path, preserving
+absolute symlinks from `~/dev`. This iCloud path is `DEVICLOUDPATH` from `dotfiles/.zshrc`
+(it already includes `DevCloud`). Launching from any listed directory preserves its
+physical working directory, unless the existing dev mapping applies. Every listed
+path must exist; omit `host_dirs` or use `[]` for no additional mounts. The existing
+settings for mounts with specific container destinations remain supported.
+Add more paths to this list without changing the launcher. Restart the sandbox after
+changing mounts; an image rebuild is unnecessary.
 
 Your `~/.zshrc` defines these helpers:
 

@@ -20,7 +20,7 @@ fi
 
 IMAGE=""
 HOST_DEV_DIR=""
-HOST_AEN_DIR=""
+HOST_DIRS=()
 HOST_CODEX_DIR=""
 HOST_SDVI_DIR=""
 HOST_AWS_DIR=""
@@ -33,12 +33,44 @@ POSTGRES_HOST=""
 POSTGRES_PORT=""
 DOCKER_SOCKET=""
 
+# Parse TOML before reading settings so invalid lists fail before Docker starts.
+local config_settings
+if ! config_settings="$(python3 - "$SANDBOX_CONFIG_FILE" <<'PYCONFIG'
+import sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit("The sandbox launcher requires Python 3.11 or newer (tomllib).")
+
+try:
+    with open(sys.argv[1], "rb") as config_file:
+        sandbox = tomllib.load(config_file)["sandbox"]
+    if not isinstance(sandbox, dict):
+        raise ValueError("sandbox must be a TOML table")
+    for key, value in sandbox.items():
+        if key == "host_dirs":
+            if not isinstance(value, list) or any(not isinstance(p, str) or not p for p in value):
+                raise ValueError("host_dirs must be a list of nonempty path strings")
+            values = value
+        else:
+            values = [str(value)]
+        for item in values:
+            if any(c in item for c in "\t\r\n\0"):
+                raise ValueError(f"{key} contains unsupported control characters")
+            print(f"{key}\t{item}")
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    sys.exit(f"Invalid sandbox configuration: {exc}")
+PYCONFIG
+)"; then
+  return 1
+fi
+
 while IFS=$'\t' read -r config_key config_value; do
   [[ "$config_value" == "~/"* ]] && config_value="$HOME/${config_value#\~/}"
   case "$config_key" in
     image) IMAGE="$config_value" ;;
     host_dev_dir) HOST_DEV_DIR="$config_value" ;;
-    host_aen_dir) HOST_AEN_DIR="$config_value" ;;
+    host_dirs) HOST_DIRS+=("$config_value") ;;
     host_codex_dir) HOST_CODEX_DIR="$config_value" ;;
     host_sdvi_dir) HOST_SDVI_DIR="$config_value" ;;
     host_aws_dir) HOST_AWS_DIR="$config_value" ;;
@@ -51,28 +83,11 @@ while IFS=$'\t' read -r config_key config_value; do
     postgres_host) POSTGRES_HOST="$config_value" ;;
     postgres_port) POSTGRES_PORT="$config_value" ;;
   esac
-done < <(
-  awk '
-    /^\[sandbox\][[:space:]]*$/ { in_sandbox = 1; next }
-    /^\[/ { in_sandbox = 0 }
-    in_sandbox && /^[[:space:]]*[a-z_]+[[:space:]]*=/ {
-      key = $0
-      sub(/[[:space:]]*=.*/, "", key)
-      sub(/^[[:space:]]*/, "", key)
-      value = $0
-      sub(/^[^=]*=[[:space:]]*/, "", value)
-      sub(/[[:space:]]*#[^\"]*$/, "", value)
-      sub(/^[\"]/, "", value)
-      sub(/[\"][[:space:]]*$/, "", value)
-      print key "\t" value
-    }
-  ' "$SANDBOX_CONFIG_FILE"
-)
+done <<< "$config_settings"
 
 missing_settings=()
 [[ -z "$IMAGE" ]] && missing_settings+=(image)
 [[ -z "$HOST_DEV_DIR" ]] && missing_settings+=(host_dev_dir)
-[[ -z "$HOST_AEN_DIR" ]] && missing_settings+=(host_aen_dir)
 [[ -z "$HOST_CODEX_DIR" ]] && missing_settings+=(host_codex_dir)
 [[ -z "$HOST_SDVI_DIR" ]] && missing_settings+=(host_sdvi_dir)
 [[ -z "$HOST_AWS_DIR" ]] && missing_settings+=(host_aws_dir)
@@ -115,16 +130,31 @@ else
   HOST_DEV_REAL_DIR=""
 fi
 
-if [[ -d "$HOST_AEN_DIR" ]]; then
-  HOST_AEN_REAL_DIR="$(cd "$HOST_AEN_DIR" && pwd -P)"
-else
-  HOST_AEN_REAL_DIR=""
-fi
+local host_mount_dir host_mount_real_dir
+local -a host_mount_paths
+host_mount_paths=()
+for host_mount_dir in "${HOST_DIRS[@]}"; do
+  if [[ "$host_mount_dir" != /* || ! -d "$host_mount_dir" || "$host_mount_dir" == *:* ]]; then
+    echo "❌ Each host_dirs entry must be an existing absolute directory without a colon:"
+    echo "  $host_mount_dir"
+    return 1
+  fi
+  host_mount_real_dir="$(cd "$host_mount_dir" && pwd -P)" || return 1
+  if [[ "$host_mount_real_dir" == *:* ]]; then
+    echo "❌ host_dirs resolves to a path containing a colon: $host_mount_real_dir"
+    return 1
+  fi
+  while [[ "$host_mount_dir" != / && "$host_mount_dir" == */ ]]; do
+    host_mount_dir="${host_mount_dir%/}"
+  done
+  host_mount_paths+=("$host_mount_dir" "$host_mount_real_dir")
+done
+# Mount both configured and physical paths, without duplicate destinations.
+host_mount_paths=("${(@u)host_mount_paths}")
 
-if [[ -z "$HOST_DEV_REAL_DIR" && -z "$HOST_AEN_REAL_DIR" ]]; then
-  echo "❌ Neither host dev nor AEN directory exists:"
+if [[ -z "$HOST_DEV_REAL_DIR" ]]; then
+  echo "❌ Host dev directory does not exist:"
   echo "  $HOST_DEV_DIR"
-  echo "  $HOST_AEN_DIR"
   return 1 2>/dev/null || exit 1
 fi
 
@@ -146,11 +176,10 @@ if [[ -n "$HOST_DEV_REAL_DIR" ]]; then
   )
 fi
 
-if [[ -n "$HOST_AEN_REAL_DIR" ]]; then
-  DOCKER_VOLUMES+=(
-    -v "$HOST_AEN_DIR:/root/dev/aen:rw"
-  )
-fi
+# Keep host paths available so absolute symlinks under ~/dev still resolve.
+for host_mount_dir in "${host_mount_paths[@]}"; do
+  DOCKER_VOLUMES+=(-v "${host_mount_dir}:${host_mount_dir}:rw")
+done
 
 if [[ -f "$HOST_GITCONFIG_FILE" ]]; then
   DOCKER_VOLUMES+=(
@@ -166,7 +195,7 @@ fi
 
 if [[ -d "$HOST_DOTFILES_DIR" ]]; then
   DOCKER_VOLUMES+=(
-    -v "$HOST_DOTFILES_DIR:/root/dotfiles:ro"
+    -v "$HOST_DOTFILES_DIR:/root/dotfiles:rw"
   )
 fi
 
@@ -187,16 +216,18 @@ if [[ -S "$DOCKER_SOCKET" ]]; then
   )
 fi
 
-if [[ -n "$HOST_AEN_REAL_DIR" && "$HOST_DIR" == "$HOST_AEN_REAL_DIR" ]]; then
-  CONTAINER_WORKDIR="/root/dev/aen"
-elif [[ -n "$HOST_AEN_REAL_DIR" && "$HOST_DIR" == "$HOST_AEN_REAL_DIR"/* ]]; then
-  CONTAINER_WORKDIR="/root/dev/aen/${HOST_DIR#$HOST_AEN_REAL_DIR/}"
-elif [[ -n "$HOST_DEV_REAL_DIR" && "$HOST_DIR" == "$HOST_DEV_REAL_DIR" ]]; then
+if [[ -n "$HOST_DEV_REAL_DIR" && "$HOST_DIR" == "$HOST_DEV_REAL_DIR" ]]; then
   CONTAINER_WORKDIR="/root/dev"
 elif [[ -n "$HOST_DEV_REAL_DIR" && "$HOST_DIR" == "$HOST_DEV_REAL_DIR"/* ]]; then
   CONTAINER_WORKDIR="/root/dev/${HOST_DIR#$HOST_DEV_REAL_DIR/}"
 else
   CONTAINER_WORKDIR="/root/dev"
+  for host_mount_dir in "${host_mount_paths[@]}"; do
+    if [[ "$HOST_DIR" == "$host_mount_dir" || "$HOST_DIR" == "$host_mount_dir"/* ]]; then
+      CONTAINER_WORKDIR="$HOST_DIR"
+      break
+    fi
+  done
 fi
 
 echo
@@ -210,12 +241,9 @@ else
   echo "Dev directory was not found at:"
   echo "  $HOST_DEV_DIR"
 fi
-if [[ -n "$HOST_AEN_REAL_DIR" ]]; then
-  echo "  $HOST_AEN_DIR -> /root/dev/aen"
-else
-  echo "AEN directory was not found at:"
-  echo "  $HOST_AEN_DIR"
-fi
+for host_mount_dir in "${host_mount_paths[@]}"; do
+  echo "  $host_mount_dir -> $host_mount_dir"
+done
 echo "Working directory in container:"
 echo "  $CONTAINER_WORKDIR"
 echo "Codex config/auth will be mounted from:"
