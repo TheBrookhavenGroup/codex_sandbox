@@ -106,7 +106,8 @@ if [[ $- == *i* ]] && [[ -z "$CODEX_PROMPTED" ]] && command -v codex >/dev/null 
   read -p "Start Codex CLI? [Y/n] " answer
   case "$answer" in
     ""|y|Y|yes|YES)
-      codex resume --all
+      # Keep the launch directory even when resuming an older session.
+      codex resume --all --no-alt-screen --cd "$PWD"
       ;;
   esac
 fi
