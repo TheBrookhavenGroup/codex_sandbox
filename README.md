@@ -86,8 +86,12 @@ settings for mounts with specific container destinations remain supported.
 Add more paths to this list without changing the launcher. Restart the sandbox after
 changing mounts; an image rebuild is unnecessary.
 
-To reach web servers running inside the sandbox from your desktop, add this separate
-section to `~/.config/codex_sandbox.cfg`:
+By default, Docker forwards sandbox port 8000 to an available desktop localhost
+port. Each session gets its own port, so multiple sandbox sessions can run together.
+The launcher prints the assigned address before attaching to the container, for
+example `8000/tcp -> 127.0.0.1:49153`; open `http://localhost:49153` on the desktop.
+
+To override this behavior, add this separate section to `~/.config/codex_sandbox.cfg`:
 
 ```toml
 [port_forward]
@@ -101,8 +105,11 @@ Add as many TCP mappings as needed, in `host:container` order. For example,
 `"8000:8010"` exposes sandbox port 8010 at `http://localhost:8000` on the desktop.
 Forwarded ports bind to desktop `127.0.0.1`. The server inside the sandbox must
 listen on `0.0.0.0` (for example, `python3 -m http.server 8000 --bind 0.0.0.0`).
-Port numbers must be between 1 and 65535, and each host port must be unique.
-Omit the section or use `ports = []` to disable forwarding. Restart the sandbox
+Port numbers must be between 1 and 65535, and each fixed host port must be unique.
+Use host port 0 (for example `"0:8000"`) to let Docker allocate an available port.
+Omit the section for automatic forwarding of port 8000, or use `ports = []` to
+disable forwarding. Fixed host ports can only be used by one session at a time.
+Restart the sandbox
 after changing mappings; an image rebuild is unnecessary.
 
 Your `~/.zshrc` defines these helpers:

@@ -63,7 +63,7 @@ try:
     port_forward = config.get("port_forward", {})
     if not isinstance(port_forward, dict):
         raise ValueError("port_forward must be a TOML table")
-    mappings = port_forward.get("ports", [])
+    mappings = port_forward.get("ports", []) if "port_forward" in config else ["0:8000"]
     if not isinstance(mappings, list):
         raise ValueError("port_forward.ports must be a list of host:container strings")
     host_ports = set()
@@ -72,12 +72,12 @@ try:
             raise ValueError("port_forward.ports must contain host:container strings")
         ports = mapping.split(":")
         if len(ports) != 2 or any(
-            not p.isascii() or not p.isdecimal() or not 1 <= int(p) <= 65535
-            for p in ports
+            not p.isascii() or not p.isdecimal() or not minimum <= int(p) <= 65535
+            for p, minimum in zip(ports, (0, 1))
         ):
-            raise ValueError(f"invalid port mapping {mapping!r}: use host:container ports from 1 to 65535")
+            raise ValueError(f"invalid port mapping {mapping!r}: use host:container (host 0 selects an available port)")
         host_port, container_port = map(int, ports)
-        if host_port in host_ports:
+        if host_port != 0 and host_port in host_ports:
             raise ValueError(f"duplicate host port in port_forward.ports: {host_port}")
         host_ports.add(host_port)
         print(f"port_forward\t{host_port}:{container_port}")
@@ -318,7 +318,11 @@ echo "  $POSTGRES_HOST:$POSTGRES_PORT"
 if (( ${#PORT_FORWARDS[@]} > 0 )); then
   echo "Port forwards (desktop localhost -> container):"
   for port_mapping in "${PORT_FORWARDS[@]}"; do
-    echo "  127.0.0.1:${port_mapping%%:*} -> ${port_mapping#*:} (TCP)"
+    if [[ "${port_mapping%%:*}" == 0 ]]; then
+      echo "  Available desktop port -> ${port_mapping#*:} (TCP)"
+    else
+      echo "  127.0.0.1:${port_mapping%%:*} -> ${port_mapping#*:} (TCP)"
+    fi
   done
 fi
 if [[ -S "$DOCKER_SOCKET" ]]; then
@@ -337,7 +341,8 @@ else
   echo "Starting container..."
   echo
 
-  docker run -it --rm \
+  local container_id container_exit_status
+  container_id="$(docker create -it \
     -e CODEX_HOME="$DOCKER_CODEX_HOME" \
     -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
     -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
@@ -348,7 +353,22 @@ else
     "${DOCKER_VOLUMES[@]}" \
     -w "$CONTAINER_WORKDIR" \
     "$IMAGE" \
-    "${CONTAINER_COMMAND[@]}"
+    "${CONTAINER_COMMAND[@]}")" || return $?
+  # Start before inspecting ports: Docker allocates ephemeral host ports at startup.
+  # Always remove this session's container, including when attach is interrupted.
+  {
+    docker start "$container_id" >/dev/null || return $?
+    if (( ${#PORT_FORWARDS[@]} > 0 )); then
+      echo "Desktop addresses (container port -> desktop):"
+      docker port "$container_id"
+      echo
+    fi
+    docker attach "$container_id"
+    container_exit_status="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" || return $?
+    return "$container_exit_status"
+  } always {
+    docker rm -f "$container_id" >/dev/null
+  }
 fi
 }
 
