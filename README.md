@@ -66,7 +66,7 @@ cp "$DEVPATH/tbg/codex_sandbox/codex_sandbox.cfg.example" \
 ```
 
 Edit that one file to change host paths, the image, Docker Codex home, Docker socket, Postgres
-connection, or MCP servers. Values beginning with `~/` are expanded against the host home directory.
+connection, port forwards, or MCP servers. Values beginning with `~/` are expanded against the host home directory.
 
 The host launcher requires Python 3.11 or newer to parse the TOML configuration.
 Use the optional `host_dirs` list in `[sandbox]` for additional directories:
@@ -85,6 +85,25 @@ path must exist; omit `host_dirs` or use `[]` for no additional mounts. The exis
 settings for mounts with specific container destinations remain supported.
 Add more paths to this list without changing the launcher. Restart the sandbox after
 changing mounts; an image rebuild is unnecessary.
+
+To reach web servers running inside the sandbox from your desktop, add this separate
+section to `~/.config/codex_sandbox.cfg`:
+
+```toml
+[port_forward]
+ports = [
+  "8000:8000",
+  "8001:8010",
+]
+```
+
+Add as many TCP mappings as needed, in `host:container` order. For example,
+`"8000:8010"` exposes sandbox port 8010 at `http://localhost:8000` on the desktop.
+Forwarded ports bind to desktop `127.0.0.1`. The server inside the sandbox must
+listen on `0.0.0.0` (for example, `python3 -m http.server 8000 --bind 0.0.0.0`).
+Port numbers must be between 1 and 65535, and each host port must be unique.
+Omit the section or use `ports = []` to disable forwarding. Restart the sandbox
+after changing mappings; an image rebuild is unnecessary.
 
 Your `~/.zshrc` defines these helpers:
 
