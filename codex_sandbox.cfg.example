@@ -19,6 +19,12 @@ docker_socket = "~/.docker/run/docker.sock"
 postgres_host = "host.docker.internal"
 postgres_port = "5432"
 
+# By default Docker assigns an available desktop port for sandbox port 8000.
+# Optional overrides, in desktop host:container order (0 selects an available port).
+# Servers inside the sandbox must listen on 0.0.0.0 to accept forwarded traffic.
+# [port_forward]
+# ports = ["0:8000", "0:8010"]
+
 # Add any number of standard Codex MCP server tables below. Host paths used by
 # nested Docker commands can use @HOST_SDVI_DIR@ and @HOST_AWS_DIR@.
 

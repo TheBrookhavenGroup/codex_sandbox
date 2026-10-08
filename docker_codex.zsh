@@ -21,6 +21,7 @@ fi
 IMAGE=""
 HOST_DEV_DIR=""
 HOST_DIRS=()
+PORT_FORWARDS=()
 HOST_CODEX_DIR=""
 HOST_SDVI_DIR=""
 HOST_AWS_DIR=""
@@ -44,7 +45,8 @@ except ImportError:
 
 try:
     with open(sys.argv[1], "rb") as config_file:
-        sandbox = tomllib.load(config_file)["sandbox"]
+        config = tomllib.load(config_file)
+        sandbox = config["sandbox"]
     if not isinstance(sandbox, dict):
         raise ValueError("sandbox must be a TOML table")
     for key, value in sandbox.items():
@@ -58,6 +60,27 @@ try:
             if any(c in item for c in "\t\r\n\0"):
                 raise ValueError(f"{key} contains unsupported control characters")
             print(f"{key}\t{item}")
+    port_forward = config.get("port_forward", {})
+    if not isinstance(port_forward, dict):
+        raise ValueError("port_forward must be a TOML table")
+    mappings = port_forward.get("ports", []) if "port_forward" in config else ["0:8000"]
+    if not isinstance(mappings, list):
+        raise ValueError("port_forward.ports must be a list of host:container strings")
+    host_ports = set()
+    for mapping in mappings:
+        if not isinstance(mapping, str):
+            raise ValueError("port_forward.ports must contain host:container strings")
+        ports = mapping.split(":")
+        if len(ports) != 2 or any(
+            not p.isascii() or not p.isdecimal() or not minimum <= int(p) <= 65535
+            for p, minimum in zip(ports, (0, 1))
+        ):
+            raise ValueError(f"invalid port mapping {mapping!r}: use host:container (host 0 selects an available port)")
+        host_port, container_port = map(int, ports)
+        if host_port != 0 and host_port in host_ports:
+            raise ValueError(f"duplicate host port in port_forward.ports: {host_port}")
+        host_ports.add(host_port)
+        print(f"port_forward\t{host_port}:{container_port}")
 except (OSError, ValueError, KeyError, TypeError) as exc:
     sys.exit(f"Invalid sandbox configuration: {exc}")
 PYCONFIG
@@ -71,6 +94,7 @@ while IFS=$'\t' read -r config_key config_value; do
     image) IMAGE="$config_value" ;;
     host_dev_dir) HOST_DEV_DIR="$config_value" ;;
     host_dirs) HOST_DIRS+=("$config_value") ;;
+    port_forward) PORT_FORWARDS+=("$config_value") ;;
     host_codex_dir) HOST_CODEX_DIR="$config_value" ;;
     host_sdvi_dir) HOST_SDVI_DIR="$config_value" ;;
     host_aws_dir) HOST_AWS_DIR="$config_value" ;;
@@ -202,6 +226,10 @@ fi
 DOCKER_NETWORK_ARGS=(
   --add-host host.docker.internal:host-gateway
 )
+local port_mapping
+for port_mapping in "${PORT_FORWARDS[@]}"; do
+  DOCKER_NETWORK_ARGS+=(-p "127.0.0.1:$port_mapping")
+done
 
 POSTGRES_ENV=(
   -e PGHOST="$POSTGRES_HOST"
@@ -287,6 +315,16 @@ echo "Sandbox configuration will be loaded from:"
 echo "  $SANDBOX_CONFIG_FILE"
 echo "Host Postgres will be reachable in the container at:"
 echo "  $POSTGRES_HOST:$POSTGRES_PORT"
+if (( ${#PORT_FORWARDS[@]} > 0 )); then
+  echo "Port forwards (desktop localhost -> container):"
+  for port_mapping in "${PORT_FORWARDS[@]}"; do
+    if [[ "${port_mapping%%:*}" == 0 ]]; then
+      echo "  Available desktop port -> ${port_mapping#*:} (TCP)"
+    else
+      echo "  127.0.0.1:${port_mapping%%:*} -> ${port_mapping#*:} (TCP)"
+    fi
+  done
+fi
 if [[ -S "$DOCKER_SOCKET" ]]; then
   echo "Docker socket will be mounted from:"
   echo "  $DOCKER_SOCKET -> /var/run/docker.sock"
@@ -303,7 +341,8 @@ else
   echo "Starting container..."
   echo
 
-  docker run -it --rm \
+  local container_id container_exit_status
+  container_id="$(docker create -it \
     -e CODEX_HOME="$DOCKER_CODEX_HOME" \
     -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
     -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
@@ -314,7 +353,22 @@ else
     "${DOCKER_VOLUMES[@]}" \
     -w "$CONTAINER_WORKDIR" \
     "$IMAGE" \
-    "${CONTAINER_COMMAND[@]}"
+    "${CONTAINER_COMMAND[@]}")" || return $?
+  # Start before inspecting ports: Docker allocates ephemeral host ports at startup.
+  # Always remove this session's container, including when attach is interrupted.
+  {
+    docker start "$container_id" >/dev/null || return $?
+    if (( ${#PORT_FORWARDS[@]} > 0 )); then
+      echo "Desktop addresses (container port -> desktop):"
+      docker port "$container_id"
+      echo
+    fi
+    docker attach "$container_id"
+    container_exit_status="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" || return $?
+    return "$container_exit_status"
+  } always {
+    docker rm -f "$container_id" >/dev/null
+  }
 fi
 }
 
