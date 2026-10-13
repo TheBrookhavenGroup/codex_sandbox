@@ -341,7 +341,20 @@ else
   echo "Starting container..."
   echo
 
-  local container_id container_exit_status
+  local container_id container_exit_status port_report_pid
+  if (( ${#PORT_FORWARDS[@]} > 0 )); then
+    # Hold the interactive command until the attached terminal has received the
+    # port report. Keep the image's normal login shell for argument-free launches.
+    (( ${#CONTAINER_COMMAND[@]} > 0 )) || CONTAINER_COMMAND=(/bin/bash -il)
+    CONTAINER_COMMAND=(/bin/sh -c '
+      attempt=0
+      while [ ! -e /tmp/codex-port-report-ready ] && [ "$attempt" -lt 150 ]; do
+        sleep 0.1
+        attempt=$((attempt + 1))
+      done
+      exec "$@"
+    ' codex-start "${CONTAINER_COMMAND[@]}")
+  fi
   container_id="$(docker create -it \
     -e CODEX_HOME="$DOCKER_CODEX_HOME" \
     -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
@@ -354,19 +367,35 @@ else
     -w "$CONTAINER_WORKDIR" \
     "$IMAGE" \
     "${CONTAINER_COMMAND[@]}")" || return $?
-  # Start before inspecting ports: Docker allocates ephemeral host ports at startup.
+  # Attach during startup so interactive prompts cannot be lost. Docker allocates
+  # ephemeral ports at startup, so report them from a background process.
   # Always remove this session's container, including when attach is interrupted.
   {
-    docker start "$container_id" >/dev/null || return $?
     if (( ${#PORT_FORWARDS[@]} > 0 )); then
-      echo "Desktop addresses (container port -> desktop):"
-      docker port "$container_id"
-      echo
+      (
+        local attempt assigned_ports
+        for attempt in {1..100}; do
+          if [[ "$(docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null)" == true ]]; then
+            assigned_ports="$(docker port "$container_id" 2>/dev/null)"
+            if [[ -n "$assigned_ports" ]]; then
+              # Docker has put the desktop terminal into raw mode by now.
+              printf '\r\nDesktop addresses (container port -> desktop):\r\n%s\r\n\r\n' "${assigned_ports//$'\n'/$'\r\n'}"
+              docker exec "$container_id" touch /tmp/codex-port-report-ready >/dev/null
+              break
+            fi
+          fi
+          sleep 0.1
+        done
+      ) &!
+      port_report_pid=$!
     fi
-    docker attach "$container_id"
+    docker start --attach --interactive "$container_id" || return $?
     container_exit_status="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" || return $?
     return "$container_exit_status"
   } always {
+    if [[ -n "$port_report_pid" ]]; then
+      kill "$port_report_pid" 2>/dev/null
+    fi
     docker rm -f "$container_id" >/dev/null
   }
 fi

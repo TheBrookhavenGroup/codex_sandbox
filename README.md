@@ -88,7 +88,8 @@ changing mounts; an image rebuild is unnecessary.
 
 By default, Docker forwards sandbox port 8000 to an available desktop localhost
 port. Each session gets its own port, so multiple sandbox sessions can run together.
-The launcher prints the assigned address before attaching to the container, for
+The launcher attaches as the container starts and prints the assigned address once
+Docker allocates it, keeping startup prompts visible. The address looks like, for
 example `8000/tcp -> 127.0.0.1:49153`; open `http://localhost:49153` on the desktop.
 
 To override this behavior, add this separate section to `~/.config/codex_sandbox.cfg`:
