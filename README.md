@@ -92,6 +92,44 @@ The launcher attaches as the container starts and prints the assigned address on
 Docker allocates it, keeping startup prompts visible. The address looks like, for
 example `8000/tcp -> 127.0.0.1:49153`; open `http://localhost:49153` on the desktop.
 
+A project can override the port mappings with `.codex/sandbox.toml` in its launch
+directory. For example, BEDS uses:
+
+```toml
+[port_forward]
+ports = ["55080:8000"]
+```
+
+This keeps BEDS at `http://127.0.0.1:55080` on the Mac. Projects without this
+override keep the global settings, which default to an available desktop port.
+If a fixed port is already in use, Docker reports an error; the launcher does not
+silently change the project's URL. Exit an existing BEDS sandbox before launching
+another. Project port configuration is read on the Mac before container creation.
+
+If the container working directory contains `.codex/startup.sh`, the launcher runs
+it with Bash after the port report and before opening the shell or Codex. Use this
+project-owned script to start local services and print their desktop URLs. The
+hook must return after starting any background services; its failure is reported
+without preventing access to the sandbox. Only the current working directory is
+checked. Starting a sandbox in a project with this file executes that project's
+script. Hook support is in the host launcher and needs no image rebuild.
+
+The image includes `uv`. The launcher sets `UV_PROJECT_ENVIRONMENT` to a
+project-specific Linux path under `/opt/venv/` and `UV_CACHE_DIR` to `/opt/uv-cache`,
+both inside the container. Hooks can use `uv run` without touching a Mac `.venv`.
+These environments and caches disappear when the session's container is removed.
+The hook prints the environment path before running; it must return after starting
+services in the background.
+
+The launcher also overlays Codex's global `AGENTS.override.md` inside the container.
+It preserves the host's global override instructions (or `AGENTS.md` when no
+override exists) and appends sandbox-only authorization to use `uv`. Repository-local
+environments remain protected. The Mac's instruction files are not changed.
+When switching projects inside a session, set `UV_PROJECT_ENVIRONMENT` to a
+different project-specific path under `/opt/venv/` before running uv project commands.
+Restart through the updated launcher to apply these changes; no rebuild is needed
+if the image already includes `uv`.
+
 To override this behavior, add this separate section to `~/.config/codex_sandbox.cfg`:
 
 ```toml

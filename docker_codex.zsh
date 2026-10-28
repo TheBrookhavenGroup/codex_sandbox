@@ -36,7 +36,7 @@ DOCKER_SOCKET=""
 
 # Parse TOML before reading settings so invalid lists fail before Docker starts.
 local config_settings
-if ! config_settings="$(python3 - "$SANDBOX_CONFIG_FILE" <<'PYCONFIG'
+if ! config_settings="$(python3 - "$SANDBOX_CONFIG_FILE" "$HOST_DIR/.codex/sandbox.toml" <<'PYCONFIG'
 import sys
 try:
     import tomllib
@@ -60,6 +60,14 @@ try:
             if any(c in item for c in "\t\r\n\0"):
                 raise ValueError(f"{key} contains unsupported control characters")
             print(f"{key}\t{item}")
+    # A project may pin its own ports without changing other projects' defaults.
+    from pathlib import Path
+    project_config_path = Path(sys.argv[2])
+    if project_config_path.is_file():
+        with project_config_path.open("rb") as project_file:
+            project_config = tomllib.load(project_file)
+        if "port_forward" in project_config:
+            config["port_forward"] = project_config["port_forward"]
     port_forward = config.get("port_forward", {})
     if not isinstance(port_forward, dict):
         raise ValueError("port_forward must be a TOML table")
@@ -341,36 +349,73 @@ else
   echo "Starting container..."
   echo
 
-  local container_id container_exit_status port_report_pid
-  if (( ${#PORT_FORWARDS[@]} > 0 )); then
-    # Hold the interactive command until the attached terminal has received the
-    # port report. Keep the image's normal login shell for argument-free launches.
-    (( ${#CONTAINER_COMMAND[@]} > 0 )) || CONTAINER_COMMAND=(/bin/bash -il)
-    CONTAINER_COMMAND=(/bin/sh -c '
+  local container_id container_exit_status port_report_pid sandbox_instructions
+  # Overlay global instructions inside Docker without changing the Mac's file.
+  sandbox_instructions="$(mktemp "${TMPDIR:-/tmp}/codex-sandbox-instructions.XXXXXX")" || return $?
+  if [[ -f "$HOST_CODEX_DIR/AGENTS.override.md" ]]; then
+    cat "$HOST_CODEX_DIR/AGENTS.override.md" > "$sandbox_instructions"
+  elif [[ -f "$HOST_CODEX_DIR/AGENTS.md" ]]; then
+    cat "$HOST_CODEX_DIR/AGENTS.md" > "$sandbox_instructions"
+  fi
+  cat >> "$sandbox_instructions" <<'SANDBOX_INSTRUCTIONS'
+
+## Docker sandbox Python authorization
+
+Inside this Docker sandbox, the user authorizes using uv for project startup,
+dependency installation, and validation without requesting permission again.
+This is an exception to inherited instructions prohibiting uv use. Repository-local
+Python environments remain user-owned: do not create or modify them without an
+explicit request. UV_PROJECT_ENVIRONMENT points to a container-only environment
+under /opt/venv/ named for the launch project and Linux platform. Use that location
+for uv project commands; if changing projects, select a different project-specific
+path under /opt/venv/ first. Report the absolute path before creating an environment
+and state that it is outside the repository. Do not use uv pip or other installers
+against a repository-local environment. This authorization applies only inside
+the Docker sandbox; it does not authorize changes to Mac Python environments.
+SANDBOX_INSTRUCTIONS
+  DOCKER_VOLUMES+=(-v "$sandbox_instructions:$DOCKER_CODEX_HOME/AGENTS.override.md:ro")
+  # Run a project hook before entering the interactive command. This wrapper is
+  # host-provided, so adding hook support does not require rebuilding the image.
+  (( ${#CONTAINER_COMMAND[@]} > 0 )) || CONTAINER_COMMAND=(/bin/bash -il)
+  CONTAINER_COMMAND=(/bin/sh -c '
+    wait_for_ports="$1"
+    shift
+    # uv must never reuse a Mac environment in the bind-mounted repository.
+    project_key="$(printf %s "$PWD" | sha256sum | cut -c1-12)"
+    export UV_PROJECT_ENVIRONMENT="/opt/venv/${PWD##*/}-linux-$(uname -m)-$project_key"
+    export UV_CACHE_DIR=/opt/uv-cache
+    if [ "$wait_for_ports" -gt 0 ]; then
       attempt=0
       while [ ! -e /tmp/codex-port-report-ready ] && [ "$attempt" -lt 150 ]; do
         sleep 0.1
         attempt=$((attempt + 1))
       done
-      exec "$@"
-    ' codex-start "${CONTAINER_COMMAND[@]}")
-  fi
-  container_id="$(docker create -it \
-    -e CODEX_HOME="$DOCKER_CODEX_HOME" \
-    -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
-    -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
-    -e HOST_SDVI_SOURCE_DIR="$HOST_SDVI_DIR" \
-    -e HOST_AWS_SOURCE_DIR="$HOST_AWS_DIR" \
-    "${POSTGRES_ENV[@]}" \
-    "${DOCKER_NETWORK_ARGS[@]}" \
-    "${DOCKER_VOLUMES[@]}" \
-    -w "$CONTAINER_WORKDIR" \
-    "$IMAGE" \
-    "${CONTAINER_COMMAND[@]}")" || return $?
-  # Attach during startup so interactive prompts cannot be lost. Docker allocates
-  # ephemeral ports at startup, so report them from a background process.
-  # Always remove this session's container, including when attach is interrupted.
+    fi
+    if [ -f .codex/startup.sh ]; then
+      printf "\nRunning project startup: %s/.codex/startup.sh\n" "$PWD"
+      printf "uv environment (outside the repository): %s\n" "$UV_PROJECT_ENVIRONMENT"
+      if ! /bin/bash .codex/startup.sh; then
+        printf "Project startup failed; continuing into the sandbox.\n" >&2
+      fi
+    fi
+    exec "$@"
+  ' codex-start "${#PORT_FORWARDS[@]}" "${CONTAINER_COMMAND[@]}")
   {
+    container_id="$(docker create -it \
+      -e CODEX_HOME="$DOCKER_CODEX_HOME" \
+      -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
+      -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
+      -e HOST_SDVI_SOURCE_DIR="$HOST_SDVI_DIR" \
+      -e HOST_AWS_SOURCE_DIR="$HOST_AWS_DIR" \
+      "${POSTGRES_ENV[@]}" \
+      "${DOCKER_NETWORK_ARGS[@]}" \
+      "${DOCKER_VOLUMES[@]}" \
+      -w "$CONTAINER_WORKDIR" \
+      "$IMAGE" \
+      "${CONTAINER_COMMAND[@]}")" || return $?
+    # Attach during startup so interactive prompts cannot be lost. Docker allocates
+    # ephemeral ports at startup, so report them from a background process.
+    # Always remove this session's container, including when attach is interrupted.
     if (( ${#PORT_FORWARDS[@]} > 0 )); then
       (
         local attempt assigned_ports
@@ -396,7 +441,10 @@ else
     if [[ -n "$port_report_pid" ]]; then
       kill "$port_report_pid" 2>/dev/null
     fi
-    docker rm -f "$container_id" >/dev/null
+    if [[ -n "$container_id" ]]; then
+      docker rm -f "$container_id" >/dev/null
+    fi
+    rm -f "$sandbox_instructions"
   }
 fi
 }
