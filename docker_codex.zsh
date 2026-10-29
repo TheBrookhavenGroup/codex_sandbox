@@ -5,6 +5,16 @@ emulate -L zsh
 setopt PIPE_FAIL
 
 HOST_DIR="$(pwd -P)"
+# Check the Mac launch directory and its ancestors before path mapping.
+local rally_enabled=false
+local rally_parent="$HOST_DIR"
+while [[ "$rally_parent" != / ]]; do
+  if [[ "${rally_parent:t}" == aen ]]; then
+    rally_enabled=true
+    break
+  fi
+  rally_parent="${rally_parent:h}"
+done
 SANDBOX_CONFIG_FILE="$HOME/.config/codex_sandbox.cfg"
 LAUNCHER_DIR="${${(%):-%x}:A:h}"
 
@@ -345,6 +355,32 @@ echo
 if ! docker info >/dev/null 2>&1; then
   echo "❌ Docker is not running."
 else
+  # Host-side project handoff must run before Docker reserves forwarded ports.
+  if [[ -f "$HOST_DIR/.codex/prestart.sh" ]]; then
+    echo "Running project prestart: $HOST_DIR/.codex/prestart.sh"
+    /bin/bash "$HOST_DIR/.codex/prestart.sh" "$CONTAINER_WORKDIR" || return $?
+  fi
+  # Give fixed-port conflicts a useful explanation before creating a container.
+  # Docker still handles races and ports occupied by non-Docker processes.
+  local fixed_host_port port_owner
+  for port_mapping in "${PORT_FORWARDS[@]}"; do
+    fixed_host_port="${port_mapping%%:*}"
+    [[ "$fixed_host_port" == 0 ]] && continue
+    port_owner="$(docker ps --filter "publish=$fixed_host_port" \
+      --format '{{.ID}}  {{.Names}}  {{.Ports}}')" || return $?
+    if [[ -n "$port_owner" ]]; then
+      echo "❌ Desktop port $fixed_host_port is already published by a running container:"
+      echo "  $port_owner"
+      echo
+      echo "Exit that sandbox's shell, or stop the container if it is no longer needed:"
+      echo "  docker stop <container-ID>"
+      echo "To run another sandbox alongside it, use an available host port:"
+      echo '  [port_forward]'
+      echo "  ports = [\"0:${port_mapping#*:}\"]"
+      echo "Set this in $HOST_DIR/.codex/sandbox.toml (project settings override global settings)."
+      return 1
+    fi
+  done
   echo
   echo "Starting container..."
   echo
@@ -373,7 +409,12 @@ and state that it is outside the repository. Do not use uv pip or other installe
 against a repository-local environment. This authorization applies only inside
 the Docker sandbox; it does not authorize changes to Mac Python environments.
 SANDBOX_INSTRUCTIONS
-  DOCKER_VOLUMES+=(-v "$sandbox_instructions:$DOCKER_CODEX_HOME/AGENTS.override.md:ro")
+  # Keep project-dependent MCP config local to this container. The entrypoint
+  # links persistent credentials and sessions from the host Codex home.
+  local runtime_codex_home="/tmp/codex-home"
+  DOCKER_VOLUMES+=(-v "$sandbox_instructions:$runtime_codex_home/AGENTS.override.md:ro")
+  # Use the current startup policy even when the image was built earlier.
+  DOCKER_VOLUMES+=(-v "$LAUNCHER_DIR/codex-sandbox-entrypoint.sh:/usr/local/bin/codex-sandbox-entrypoint:ro")
   # Run a project hook before entering the interactive command. This wrapper is
   # host-provided, so adding hook support does not require rebuilding the image.
   (( ${#CONTAINER_COMMAND[@]} > 0 )) || CONTAINER_COMMAND=(/bin/bash -il)
@@ -402,7 +443,9 @@ SANDBOX_INSTRUCTIONS
   ' codex-start "${#PORT_FORWARDS[@]}" "${CONTAINER_COMMAND[@]}")
   {
     container_id="$(docker create -it \
-      -e CODEX_HOME="$DOCKER_CODEX_HOME" \
+      -e CODEX_HOME="$runtime_codex_home" \
+      -e HOST_CODEX_DIR="$DOCKER_CODEX_HOME" \
+      -e SANDBOX_RALLY_ENABLED="$rally_enabled" \
       -e HOST_CODEX_SOURCE_DIR="$HOST_CODEX_DIR" \
       -e HOST_CODEX_REAL_DIR="$HOST_CODEX_REAL_DIR" \
       -e HOST_SDVI_SOURCE_DIR="$HOST_SDVI_DIR" \

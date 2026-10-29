@@ -18,6 +18,9 @@ if [[ -d "$HOST_CODEX_DIR" && "$CONTAINER_CODEX_DIR" != "$HOST_CODEX_DIR" ]]; th
     fi
   done
 
+  # These directories must remain persistent even on a fresh Codex home.
+  mkdir -p "$HOST_CODEX_DIR/sessions" "$HOST_CODEX_DIR/archived_sessions"
+  touch "$HOST_CODEX_DIR/session_index.jsonl" "$HOST_CODEX_DIR/history.jsonl"
   for name in sessions archived_sessions session_index.jsonl history.jsonl; do
     source="$HOST_CODEX_DIR/$name"
     target="$CONTAINER_CODEX_DIR/$name"
@@ -146,6 +149,30 @@ if [[ -f "$SANDBOX_CONFIG_FILE" ]]; then
       -e "s|@HOST_SDVI_DIR@|$host_sdvi_dir|g" \
       -e "s|@HOST_AWS_DIR@|$host_aws_dir|g" \
       >> "$tmp_config"
+  mv "$tmp_config" "$CONFIG_FILE"
+fi
+
+# The launcher checks the physical Mac launch directory and its ancestors. When
+# invoked directly, apply the same rule to the container working directory.
+rally_enabled="${SANDBOX_RALLY_ENABLED:-}"
+if [[ -z "$rally_enabled" ]]; then
+  rally_enabled=false
+  rally_parent="$(pwd -P)"
+  while [[ "$rally_parent" != / ]]; do
+    if [[ "${rally_parent##*/}" == aen ]]; then
+      rally_enabled=true
+      break
+    fi
+    rally_parent="$(dirname "$rally_parent")"
+  done
+fi
+if [[ "$rally_enabled" != true ]]; then
+  tmp_config="$(mktemp)"
+  awk '
+      /^\[/ { skip = 0 }
+      /^\[mcp_servers\.rally(]|[_.])/ { skip = 1 }
+      !skip { print }
+  ' "$CONFIG_FILE" > "$tmp_config"
   mv "$tmp_config" "$CONFIG_FILE"
 fi
 

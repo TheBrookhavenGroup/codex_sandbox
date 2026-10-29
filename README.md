@@ -17,7 +17,7 @@ to `/root/.bashrc` in the image.
 ```text
 ~/dev             -> /workspace/dev
 ~/dev             -> /root/dev
-~/.codex          -> /host-codex and CODEX_HOME inside Docker
+~/.codex          -> /host-codex (persistent credentials and sessions)
 ~/.sdvi           -> /root/.sdvi
 ~/.aws            -> /root/.aws
 ~/.config/gh      -> /root/.config/gh
@@ -36,10 +36,13 @@ starts in `/root/dev`.
 The launcher mounts the Mac `~/.gitconfig` without modifying it. Existing Git config rules
 such as `includeIf "gitdir:~/dev/aen/"` can match the corresponding container path.
 
-`codex-sandbox-entrypoint.sh` runs inside the container before Bash starts. The host's `~/.codex`
-is the persistent Codex home and is mounted at `/host-codex`; `/root/.codex` points to that same
-directory. The launcher reads sandbox settings and MCP definitions from
-`~/.config/codex_sandbox.cfg`. On every start, the entrypoint updates `~/.codex/config.toml` with
+The launcher mounts this repo's current `codex-sandbox-entrypoint.sh` into the
+container, so startup policy changes do not require rebuilding the image. It runs
+before Bash starts. The host's `~/.codex` is mounted at `/host-codex`.
+Each container uses `/tmp/codex-home` as `CODEX_HOME`, with persistent credentials
+and session history linked from the configured `docker_codex_home`.
+The launcher reads sandbox settings and MCP definitions from
+`~/.config/codex_sandbox.cfg`. On every start, the entrypoint updates the container's `config.toml` with
 Linux-safe sandbox settings, replaces its MCP sections with the tables from that file, and leaves
 all other Codex state in place. The example defines `rally_dev`, `rally_qa`, and `rally_prod`. Dev
 permits confirmed writes, while QA and production enforce read-only access. All three pass SDVI and
@@ -102,9 +105,15 @@ ports = ["55080:8000"]
 
 This keeps BEDS at `http://127.0.0.1:55080` on the Mac. Projects without this
 override keep the global settings, which default to an available desktop port.
-If a fixed port is already in use, Docker reports an error; the launcher does not
-silently change the project's URL. Exit an existing BEDS sandbox before launching
-another. Project port configuration is read on the Mac before container creation.
+If a fixed port is already published by a running container, the launcher shows
+that container and stops before creating another. Exit the existing sandbox's
+shell (`/exit` leaves Codex; `exit` then leaves the shell), or use
+`docker stop <container-ID>` if that container is no longer needed. To run sessions
+alongside one another, change the project's mapping to `ports = ["0:8000"]`.
+The launcher preserves fixed URLs; Docker still reports conflicts with non-Docker
+processes or ports claimed during startup. On the Mac, `lsof -nP -iTCP:55080 -sTCP:LISTEN`
+can help identify another process using the port. Project port configuration is
+read on the Mac before container creation.
 
 If the container working directory contains `.codex/startup.sh`, the launcher runs
 it with Bash after the port report and before opening the shell or Codex. Use this
@@ -223,11 +232,19 @@ The persistent Codex home on the Mac is:
 ~/.codex
 ```
 
-It is mounted at `/host-codex`, which is Docker Codex's `CODEX_HOME`.
+It is mounted at `/host-codex`. The container uses a separate configuration in
+`/tmp/codex-home` so starting another project cannot change its MCP configuration.
 
-The entrypoint updates `~/.codex/config.toml` atomically on every start. It retains non-MCP
+The entrypoint copies the host config into the container's Codex home and updates
+that copy atomically on every start. It retains non-MCP
 settings, forces the sandbox mode appropriate for the container, and replaces MCP sections with
-the contents of `~/.config/codex_sandbox.cfg`.
+the contents of `~/.config/codex_sandbox.cfg`. Rally MCP entries (`rally` and
+`rally_*`, including their subtables) are included only when the sandbox starts
+in a directory named exactly `aen` or any of its descendants, anywhere on the Mac.
+The launcher checks the physical Mac launch directory and its ancestors before
+mapping paths into Docker. Starting outside such a tree omits Rally; other MCP servers
+remain available. Paths are resolved physically, including symlinks. Restart the
+sandbox after changing projects to apply the appropriate MCP configuration.
 
 The config supports `@HOST_SDVI_DIR@` and `@HOST_AWS_DIR@` placeholders in MCP tables. These expand to the
 original host paths, which is required for bind mounts made by nested Docker commands. Literal
@@ -289,3 +306,8 @@ codex login --device-auth
 
 Use `/exit` to leave Codex and return to the Linux shell.  Use `Ctrl-D` or `exit` from that shell to
 leave Docker and return to the Mac prompt.
+
+If present, `.codex/prestart.sh` runs on the host before port conflict checks
+and container creation. It receives the new container working directory as its
+first argument. A nonzero exit aborts startup. Use it for project-specific
+handoff tasks such as stopping a previous dashboard sandbox.
